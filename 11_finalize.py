@@ -25,7 +25,7 @@ from naming_utils import (
     safe_fill_hex,
 )
 
-INPUT_FILE  = Path("output") / "Combined_Final_Shifted_B3_Labeled.xlsx"
+INPUT_FILE  = Path("output") / "Combined_Reordered_With_OTE.xlsx"
 OUTPUT_FILE = Path("output") / "Asbuilt_Workbook_post12.xlsx"
 
 legacy_name_rx = re.compile(
