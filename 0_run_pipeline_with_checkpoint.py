@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Run the AltColorFiberSheets pipeline with a manual checkpoint.
+"""Run the Fiber Data Pipeline with a manual checkpoint.
 
-Runs steps 1-12 in order, but pauses after step 2 (which produces
+Runs steps 1-9 in order, but pauses after step 2 (which produces
 output/Colored_Connections_Table.xlsx) so you can verify direction colors.
 
 Examples:
@@ -20,18 +20,14 @@ from pathlib import Path
 
 
 SCRIPT_ORDER = [
-    "1_coords_from_kmz.py",
-    "2_compute_all_directions.py",
-    "3_color_cut_sheet.py",
-    "4_update_and_highlight_splitter_section.py",
-    "5_format_top_section.py",
-    "6_change_connections_column.py",
-    "7_assign_addresses.py",
-    "8_reorder_sheaths_detect_M_or_N.py",
-    "9_shift_ports_preserve_all_ports.py",
-    "10_label_b3_final_shifted_fixed_cols.py",
-    "11_final.py",
-    "12_cleanup_splitter_and_trim.py",
+    "1_coords_from_kmz.py",           # Extract GPS coords from KMZ → Connections_Table
+    "2_compute_all_directions.py",     # Compute cable bearings → Colored_Connections_Table
+    "3_colorize.py",                   # Color cut sheet (main + splitter sections)
+    "5_format_top_section.py",         # Insert metadata + direction bars at top
+    "6_change_connections_column.py",  # Normalize CONNECTION column, shift/trim splitter cols
+    "7_assign_addresses.py",           # Match splice locations to nearest street address
+    "8_process_taps.py",               # Reorder sheath blocks, shift port cols, label B3
+    "11_finalize.py",                  # Fill enclosure labels, insert DEMUX/MST rows, trim columns
 ]
 
 CHECKPOINT_AFTER = "2_compute_all_directions.py"  # step 2 generates the colored connections table
@@ -84,19 +80,19 @@ def main() -> int:
         "--start",
         type=int,
         default=1,
-        help="Start from this step number (1-12). Useful to resume.",
+        help="Start from this step number (1-8). Useful to resume.",
     )
     parser.add_argument(
         "--stop",
         type=int,
-        default=12,
-        help="Stop after this step number (1-12).",
+        default=8,
+        help="Stop after this step number (1-8).",
     )
 
     args = parser.parse_args()
 
-    if not (1 <= args.start <= 12) or not (1 <= args.stop <= 12) or args.start > args.stop:
-        print("Invalid --start/--stop range. Use 1-12 and ensure start <= stop.")
+    if not (1 <= args.start <= 8) or not (1 <= args.stop <= 8) or args.start > args.stop:
+        print("Invalid --start/--stop range. Use 1-8 and ensure start <= stop.")
         return 2
 
     # Ensure we run from the folder containing this file
