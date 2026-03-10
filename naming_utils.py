@@ -172,3 +172,119 @@ def classify_sheet_name(name: str) -> str | None:
         if is_tap(name):
             return "T"
     return None
+
+
+# ---------------------------------------------------------------------------
+# Shared worksheet utilities — header-based column detection
+# ---------------------------------------------------------------------------
+
+def find_header_row(ws, label: str = "CONNECTION", max_scan_rows: int = 120) -> int | None:
+    """
+    Scan the worksheet for the row containing *label* (case-insensitive).
+    Returns the 1-based row number, or None if not found.
+    """
+    label_up = label.strip().upper()
+    max_r = min(ws.max_row, max_scan_rows)
+    max_c = min(ws.max_column, 120)
+    for r in range(1, max_r + 1):
+        for c in range(1, max_c + 1):
+            v = ws.cell(r, c).value
+            if isinstance(v, str) and v.strip().upper() == label_up:
+                return r
+    return None
+
+
+def find_col_by_header(ws, header_row: int, label: str,
+                       min_col: int = 1, max_col: int | None = None,
+                       after_col: int | None = None) -> int | None:
+    """
+    Find the column in *header_row* whose value matches *label* (case-insensitive).
+
+    Args:
+        after_col: if set, only consider columns strictly greater than this index.
+
+    Returns the 1-based column number, or None if not found.
+    """
+    label_up = label.strip().upper()
+    if max_col is None:
+        max_col = ws.max_column
+    for c in range(min_col, max_col + 1):
+        if after_col is not None and c <= after_col:
+            continue
+        v = ws.cell(header_row, c).value
+        if isinstance(v, str) and v.strip().upper() == label_up:
+            return c
+    return None
+
+
+def find_all_cols_by_header(ws, header_row: int, label: str,
+                             max_col: int | None = None) -> list[int]:
+    """Return all column indices in *header_row* matching *label*."""
+    label_up = label.strip().upper()
+    if max_col is None:
+        max_col = ws.max_column
+    return [
+        c for c in range(1, max_col + 1)
+        if isinstance(ws.cell(header_row, c).value, str)
+        and ws.cell(header_row, c).value.strip().upper() == label_up
+    ]
+
+
+def sheet_has_optical_splitters(ws, max_scan_rows: int = 400) -> bool:
+    """
+    Return True if column A of *ws* contains a cell with 'OPTICAL SPLITTERS'
+    (case-insensitive). Content-based — works regardless of sheet name format.
+    """
+    max_r = min(ws.max_row, max_scan_rows)
+    for r in range(1, max_r + 1):
+        v = ws.cell(r, 1).value
+        if isinstance(v, str) and "OPTICAL SPLITTERS" in v.upper():
+            return True
+    return False
+
+
+def optical_splitters_row(ws, max_scan_rows: int = 400) -> int | None:
+    """
+    Return the 1-based row number of the 'OPTICAL SPLITTERS' header row,
+    or None if not present.
+    """
+    max_r = min(ws.max_row, max_scan_rows)
+    for r in range(1, max_r + 1):
+        v = ws.cell(r, 1).value
+        if isinstance(v, str) and "OPTICAL SPLITTERS" in v.upper():
+            return r
+    return None
+
+
+def is_location_sheet(name: str) -> bool:
+    """
+    Return True if the sheet name represents a splice/tap location
+    (i.e. should be processed by the pipeline).
+    Excludes known non-location sheets.
+    """
+    n = name.strip().lower()
+    if n in {"index", "legend", "notes", "sheet1"}:
+        return False
+    if n.startswith("tap report"):
+        return False
+    return True
+
+
+def safe_fill_hex(cell) -> str | None:
+    """
+    Return the last-6-char RGB hex of a cell's solid fill,
+    or None if the fill is absent, non-solid, or not an RGB type.
+    Guards against indexed/theme colors that crash on .rgb access.
+    """
+    fill = getattr(cell, "fill", None)
+    if fill is None or getattr(fill, "fill_type", None) != "solid":
+        return None
+    sc = getattr(fill, "start_color", None)
+    if sc is None:
+        return None
+    if getattr(sc, "type", None) != "rgb":
+        return None
+    rgb = getattr(sc, "rgb", None)
+    if not isinstance(rgb, str) or len(rgb) < 6:
+        return None
+    return rgb[-6:].upper()

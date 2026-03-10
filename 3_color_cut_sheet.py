@@ -1,40 +1,39 @@
 import os
-import openpyxl
-from openpyxl.styles import PatternFill
 import re
+import openpyxl
 
-DATA_DIR = "data"
-OUTPUT_DIR = "output"
+from config import DATA_DIR, OUTPUT_DIR, FILLS, get_fill
+from naming_utils import (
+    is_location_sheet,
+    sheet_has_optical_splitters,
+    safe_fill_hex,
+)
+
 COLORED_CONNECTIONS_PATH = os.path.join(OUTPUT_DIR, "Colored_Connections_Table.xlsx")
 CUT_SHEET_PATH = os.path.join(DATA_DIR, "cut_sheet.xlsx")
 COLORIZED_CUT_SHEET_PATH = os.path.join(OUTPUT_DIR, "Colorized_Cut_Sheet.xlsx")
 
-# Define fill objects
-FILLS = {
-    "FFA500": PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid"),  # orange
-    "8B4513": PatternFill(start_color="8B4513", end_color="8B4513", fill_type="solid"),  # corrected brown (south)
-    "008000": PatternFill(start_color="008000", end_color="008000", fill_type="solid"),  # green
-    "708090": PatternFill(start_color="708090", end_color="708090", fill_type="solid"),  # slate
-    "FF0000": PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid"),  # red
-    "C5D9B5": PatternFill(start_color="C5D9B5", end_color="C5D9B5", fill_type="solid"),  # OLT (olive green)
-    "7FFF00": PatternFill(start_color="7FFF00", end_color="7FFF00", fill_type="solid"),  # puke
-    "FFFF00": PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid"),  # yellow
-    "ADD8E6": PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid"),  # light blue
-    "FFB6C1": PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid"),  # light pink
-    "DB7093": PatternFill(start_color="DB7093", end_color="DB7093", fill_type="solid"),  # dark pink
-    "FFDAB9": PatternFill(start_color="FFDAB9", end_color="FFDAB9", fill_type="solid"),  # pale orange
-    "FFA07A": PatternFill(start_color="FFA07A", end_color="FFA07A", fill_type="solid"),  # darker orange
-}
+# Pre-compiled regex for MST cable names (e.g. 048CT_...)
+MST_CABLE_RX = re.compile(r"\d{3}CT_")
+
+# FILLS and COLOR constants are imported from config.py
 
 def load_cable_colors():
+    """Load cable → color mapping from the Colored Connections Table.
+    Uses safe_fill_hex() to guard against non-RGB (indexed/theme) fills.
+    """
     wb = openpyxl.load_workbook(COLORED_CONNECTIONS_PATH)
     ws = wb.active
     cable_map = {}
     for row in ws.iter_rows(min_row=2):
         loc = row[0].value
+        if not loc:
+            continue
         for cell in row[3:]:
-            if cell.value and cell.fill:
-                rgb = cell.fill.start_color.rgb[-6:].upper()
+            if not cell.value:
+                continue
+            rgb = safe_fill_hex(cell)
+            if rgb:
                 cable_map.setdefault(loc, {})[cell.value.strip()] = rgb
     return cable_map
 
@@ -43,7 +42,7 @@ def apply_colors_to_cut_sheet():
     wb = openpyxl.load_workbook(CUT_SHEET_PATH)
 
     for sheetname in wb.sheetnames:
-        if sheetname == "Index":
+        if not is_location_sheet(sheetname):
             continue
 
         ws = wb[sheetname]
@@ -72,7 +71,7 @@ def apply_colors_to_cut_sheet():
             if isinstance(val_left, str):
                 val_left = val_left.strip()
                 fill = conn_dict.get(val_left)
-                if not fill and re.match(r"\d{3}CT_", val_left):
+                if not fill and MST_CABLE_RX.match(val_left):
                     fill = "FF0000"
                 if fill and fill in FILLS:
                     for c in range(1, 10):
@@ -86,7 +85,7 @@ def apply_colors_to_cut_sheet():
             if isinstance(val_right, str):
                 val_right = val_right.strip()
                 fill = conn_dict.get(val_right)
-                if not fill and re.match(r"\d{3}CT_", val_right):
+                if not fill and MST_CABLE_RX.match(val_right):
                     fill = "FF0000"
                 if fill and fill in FILLS:
                     for c in range(11, 21):
@@ -100,6 +99,7 @@ def apply_colors_to_cut_sheet():
                 if isinstance(val, str) and "PORT" in val.upper() and val.upper() != "PORT NAME":
                     for cc in range(11, 21):
                         ws.cell(row=r, column=cc).fill = FILLS["FFFF00"]
+                    break  # only color once per row if multiple PORT values exist
 
             q_val = str(ws.cell(row=r, column=17).value).upper().strip() if ws.cell(row=r, column=17).value else ""
             s_val = str(ws.cell(row=r, column=19).value).upper().strip() if ws.cell(row=r, column=19).value else ""
