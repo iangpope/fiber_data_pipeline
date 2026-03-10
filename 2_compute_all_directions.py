@@ -175,6 +175,44 @@ def generate_colored_table(named_edges, location_coords):
     red_cables = set()
     all_colored_rows = []
 
+    # -----------------------------------------------------------------------
+    # Pre-scan: for each SE enclosure, find the single nearest FT tap.
+    # Only that one winner will be colored red (MST).
+    # This prevents over-identification when multiple FT taps are near the
+    # same SE (only the closest one is the true MST tap).
+    # -----------------------------------------------------------------------
+    mst_winner_locs: set[str] = set()   # location names that are confirmed MST taps
+    se_candidates: dict[str, list] = {} # SE_name -> [(dist, ft_loc)]
+
+    for _, row in df_main.iterrows():
+        loc = str(row["Location"]).strip()
+        latlon = (row["Latitude"], row["Longitude"])
+        conn_cols = [c for c in row.index if str(c).startswith("Connection")]
+        valid_conn = [row[c] for c in conn_cols if not pd.isna(row[c])]
+
+        if len(valid_conn) != 1:
+            continue
+        cable = valid_conn[0]
+        matches = NEW_LOC_TOKEN_RX.findall(cable) or LEGACY_LOC_TOKEN_RX.findall(cable)
+        if len(matches) != 2:
+            continue
+        end1, end2 = matches
+        other = end1 if loc != end1 else end2
+        is_se_type = re.search(r"[SD]\d{3}$", other) or re.search(r"_SE_\d{3}$", other)
+        if not is_se_type:
+            continue
+        other_coord = location_coords.get(other)
+        if not other_coord:
+            continue
+        dist_m = geodesic(latlon, other_coord).meters
+        if dist_m < 50:
+            se_candidates.setdefault(other, []).append((dist_m, loc))
+
+    for se, candidates in se_candidates.items():
+        # Winner = closest FT tap to this SE
+        winner = min(candidates, key=lambda t: t[0])[1]
+        mst_winner_locs.add(winner)
+
     # Detect OLT row and its connection
     olt_pattern = re.compile(r"^[A-Z]{2}\d{2,3}E$")
     olt_loc = None
@@ -224,13 +262,11 @@ def generate_colored_table(named_edges, location_coords):
                 end1, end2 = matches
                 other = end1 if loc != end1 else end2
                 is_se_type = re.search(r"[SD]\d{3}$", other) or re.search(r"_SE_\d{3}$", other)
-                if is_se_type:
-                    other_coord = location_coords.get(other)
-                    if other_coord and geodesic(latlon, other_coord).meters < 50:
-                        raw.append((col, "red", 0))
-                        red_cables.add(cable)
-                        entries.append(cable)
-                        continue
+                if is_se_type and loc in mst_winner_locs:
+                    raw.append((col, "red", 0))
+                    red_cables.add(cable)
+                    entries.append(cable)
+                    continue
 
             dist = 0
             walked = latlon
