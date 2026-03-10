@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 from copy import copy
 from openpyxl import load_workbook
-from openpyxl.styles import PatternFill, Border, Side
+from openpyxl.styles import PatternFill, Border, Side, Font, Alignment
 
 from config import COLOR
 from naming_utils import safe_fill_hex
@@ -382,12 +382,11 @@ for sheet_name in wb.sheetnames:
         cB.value = val
 
         # style
-        cA.font = cA.font.copy(bold=True)
-        # openpyxl style objects are immutable; use .copy(...) to create a new Alignment
-        cA.alignment = cA.alignment.copy(horizontal="left")
+        cA.font = Font(bold=True)
+        cA.alignment = Alignment(horizontal="left")
         cA.fill = white_fill
 
-        cB.alignment = cB.alignment.copy(horizontal="center")
+        cB.alignment = Alignment(horizontal="center")
         cB.fill = yellow_fill
 
     meta_end = meta_start + len(labels) - 1  # row 7
@@ -414,8 +413,8 @@ for sheet_name in wb.sheetnames:
     def set_bar_cell(cell, fill_hex, value=None):
         cell.value = value
         cell.fill = PatternFill(start_color=to_argb(fill_hex), end_color=to_argb(fill_hex), fill_type="solid")
-        cell.font = cell.font.copy(bold=True, color="FFFFFF")
-        cell.alignment = cell.alignment.copy(horizontal="center", vertical="center", wrap_text=True)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     for offset, (label, count, textB, fiber_or_kind, fill_hex) in enumerate(bars):
         # Build display label from the canonical label + count

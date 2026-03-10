@@ -23,11 +23,11 @@ SCRIPT_ORDER = [
     "1_coords_from_kmz.py",           # Extract GPS coords from KMZ → Connections_Table
     "2_compute_all_directions.py",     # Compute cable bearings → Colored_Connections_Table
     "3_colorize.py",                   # Color cut sheet (main + splitter sections)
-    "5_format_top_section.py",         # Insert metadata + direction bars at top
-    "6_change_connections_column.py",  # Normalize CONNECTION column, shift/trim splitter cols
-    "7_assign_addresses.py",           # Match splice locations to nearest street address
-    "8_process_taps.py",               # Reorder sheath blocks, shift port cols, label B3
-    "11_finalize.py",                  # Fill enclosure labels, insert DEMUX/MST rows, trim columns
+    "4_format_top_section.py",         # Insert metadata + direction bars at top
+    "5_change_connections_column.py",  # Normalize CONNECTION column, shift/trim splitter cols
+    "6_assign_addresses.py",           # Match splice locations to nearest street address
+    "7_process_taps.py",               # Reorder sheath blocks, shift port cols, label B3
+    "8_finalize.py",                   # Fill enclosure labels, insert DEMUX/MST rows, trim columns
 ]
 
 CHECKPOINT_AFTER = "2_compute_all_directions.py"  # step 2 generates the colored connections table

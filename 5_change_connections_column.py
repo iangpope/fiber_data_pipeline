@@ -102,32 +102,41 @@ def auto_adjust_column_widths(ws):
         ws.column_dimensions[col_letter].width = width + 2
 
 def classify_sheet(sheet_name):
-    if sheet_name.endswith("E") and not sheet_name.startswith("MIC"):
-        return 'olt'
-    elif re.match(r"MIC[A-Z]{4}S\d{3}$", sheet_name):
-        return 'splitter'
-    elif re.match(r"MIC[A-Z]{4}D\d{3}$", sheet_name):
-        return 'distribution'
-    elif re.match(r"MIC[A-Z]{4}\d{4}$", sheet_name):
+    s = sheet_name.strip()
+    # New format: RC73E_FT_001, RC73E_SE_001
+    if re.search(r'_FT_\d+$', s, re.IGNORECASE):
         return 'tap'
-    else:
-        return 'unknown'
+    if re.search(r'_SE_\d+$', s, re.IGNORECASE):
+        return 'splitter'
+    # Legacy formats
+    if re.match(r"MIC[A-Z]{4}S\d{3}$", s):
+        return 'splitter'
+    if re.match(r"MIC[A-Z]{4}D\d{3}$", s):
+        return 'distribution'
+    if re.match(r"MIC[A-Z]{4}\d{4}$", s):
+        return 'tap'
+    # Bare OLT token (e.g., RC73E, MS33E)
+    if re.match(r'^[A-Z0-9]{2,10}E$', s, re.IGNORECASE):
+        return 'olt'
+    return 'unknown'
 
 def main():
     wb = load_workbook(input_file)
+    counts = {}
     for ws in wb.worksheets:
         sheet_name = ws.title
         if not is_location_sheet(sheet_name):
             continue
         sheet_type = classify_sheet(sheet_name)
-        print(f"Processing {sheet_name} as {sheet_type}")
+        counts[sheet_type] = counts.get(sheet_type, 0) + 1
         process_main_section(ws, sheet_type)
         process_optical_section(ws)
         auto_adjust_column_widths(ws)
 
     wb._sheets.sort(key=lambda ws: ws.title)
     wb.save(output_file)
-    print(f"✅ Processed file saved to: {output_file}")
+    summary = ", ".join(f"{v} {k}" for k, v in sorted(counts.items()))
+    print(f"✅ Processed file saved to: {output_file} ({summary})")
 
 if __name__ == "__main__":
     main()

@@ -94,4 +94,4 @@ df_connections = df_connections.sort_values(by="Location")
 # Save the connections table to Excel
 output_path = os.path.join(DATA_DIR, "Connections_Table.xlsx")
 df_connections.to_excel(output_path, index=False)
-print(df_connections.head())
+print(f"✅ Wrote {len(df_connections)} locations to {output_path}")
