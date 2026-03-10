@@ -6,6 +6,9 @@ from copy import copy
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Border, Side
 
+from config import COLOR
+from naming_utils import safe_fill_hex
+
 """
 Step 5: Format top section + add direction/special bars.
 
@@ -30,21 +33,21 @@ DEBUG_ENABLED = True
 
 OLT_TOKEN_RX = re.compile(r"^[A-Z]{2}\d{2,3}E$", flags=re.IGNORECASE)
 
-COLOR_SPLIT_1X2  = "DB7093"  # 1x2 splitter bar
-COLOR_SPLIT_1X32 = "FFB6C1"  # 1x32 splitter bar
-COLOR_MUX        = "FFDAB9"  # MUX bar
-COLOR_DEMUX      = "FFA07A"  # DEMUX bar
-LABEL_FILL       = "FFF9DB"  # pale yellow for metadata value background
-OLT_BAR_COLOR    = "C5D9B5"  # pale green (OLT links)
+COLOR_SPLIT_1X2  = COLOR["1X2"]   # 1x2 splitter bar
+COLOR_SPLIT_1X32 = COLOR["1X32"]  # 1x32 splitter bar
+COLOR_MUX        = COLOR["MUX"]   # MUX bar
+COLOR_DEMUX      = COLOR["DEMUX"] # DEMUX bar
+LABEL_FILL       = "FFF9DB"       # pale yellow for metadata value background
+OLT_BAR_COLOR    = COLOR["OLT"]   # pale green (OLT links)
 
 # Direction mapping by fill color (RGB only, last 6 hex digits)
 COLOR_TO_DIRECTION = {
-    "FFA500": "North",  # Orange
-    "8B4513": "South",  # Brown
-    "008000": "East",   # Green
-    "708090": "West",   # Slate
-    OLT_BAR_COLOR: "OLT",
-    "FF0000": "MST",    # Red
+    COLOR["NORTH"]: "North",
+    COLOR["SOUTH"]: "South",
+    COLOR["EAST"]:  "East",
+    COLOR["WEST"]:  "West",
+    OLT_BAR_COLOR:  "OLT",
+    COLOR["MST"]:   "MST",
 }
 
 BAR_ORDER = {
@@ -62,11 +65,11 @@ BAR_ORDER = {
 
 # Canonical palette (RGB, no alpha). Used to classify slightly-off shades reliably.
 PALETTE_RGB = {
-    "North": "FFA500",  # Orange
-    "South": "8B4513",  # Brown
-    "East":  "008000",  # Green
-    "West":  "708090",  # Slate
-    "MST":   "FF0000",  # Red
+    "North": COLOR["NORTH"],
+    "South": COLOR["SOUTH"],
+    "East":  COLOR["EAST"],
+    "West":  COLOR["WEST"],
+    "MST":   COLOR["MST"],
 }
 
 def _hex_to_rgb(h: str):
@@ -212,7 +215,7 @@ for row in conn_sheet.iter_rows(min_row=2):  # skip header
         fiber, locA, locB = parse_connection_value(val)
         if not fiber:
             continue
-        fill_color = cell_fill_hex(cell)  # already last-6 RGB
+        fill_color = safe_fill_hex(cell)  # already last-6 RGB, guards non-RGB fills
         connections.append((fiber, str(locA), str(locB), (fill_color or "").upper()))
 
     conn_dict[str(loc).strip()] = connections

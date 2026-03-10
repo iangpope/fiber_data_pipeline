@@ -3,6 +3,8 @@ from openpyxl.styles import PatternFill, Alignment
 import re
 import os
 
+from naming_utils import is_location_sheet
+
 # File paths
 input_file = os.path.join("output", "Combined_Formatted_Output.xlsx")
 output_file = os.path.join("output", "Combined_Formatted_Output_processed.xlsx")
@@ -115,6 +117,8 @@ def main():
     wb = load_workbook(input_file)
     for ws in wb.worksheets:
         sheet_name = ws.title
+        if not is_location_sheet(sheet_name):
+            continue
         sheet_type = classify_sheet(sheet_name)
         print(f"Processing {sheet_name} as {sheet_type}")
         process_main_section(ws, sheet_type)
