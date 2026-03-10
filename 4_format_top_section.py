@@ -506,7 +506,7 @@ for sheet_name in wb.sheetnames:
         cB.value = val
 
         # Label column: bold text, white background, left-aligned.
-        cA.font      = Font(bold=True)
+        cA.font      = Font(name="Calibri", bold=True)
         cA.alignment = Alignment(horizontal="left")
         cA.fill      = white_fill
 
@@ -545,7 +545,7 @@ for sheet_name in wb.sheetnames:
             end_color=to_argb(fill_hex),
             fill_type="solid",
         )
-        cell.font      = Font(bold=True, color="FFFFFF")
+        cell.font      = Font(name="Calibri", bold=True, color="FFFFFF")
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     # Write each bar across columns A-E.
