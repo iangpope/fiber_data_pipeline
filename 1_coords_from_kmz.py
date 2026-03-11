@@ -36,12 +36,36 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # The cut sheet may have any filename when it arrives in the data folder.
 # We copy it to a fixed name (cut_sheet.xlsx) so every downstream script
 # can reference a known path without searching the folder again.
+#
+# Several auxiliary xlsx files also live in data/ (HAF report, Tap Report
+# template, Connections Table from a prior run, etc.).  These are excluded
+# by name so that only the genuine GIS cut sheet is selected.
 # ---------------------------------------------------------------------------
-xlsx_files = [f for f in os.listdir(DATA_DIR) if f.lower().endswith(".xlsx")]
-if not xlsx_files:
-    raise FileNotFoundError("No .xlsx cut sheet found in data folder.")
+_EXCLUDE = {
+    "cut_sheet.xlsx",
+    "connections_table.xlsx",
+}
 
-cut_sheet_original = os.path.join(DATA_DIR, xlsx_files[0])
+def _is_auxiliary(filename: str) -> bool:
+    """Return True if filename looks like an auxiliary data file, not the cut sheet."""
+    lower = filename.lower()
+    return (
+        lower in _EXCLUDE
+        or "haf" in lower
+        or "template" in lower
+        or "tap report" in lower
+    )
+
+xlsx_files = [
+    f for f in os.listdir(DATA_DIR)
+    if f.lower().endswith(".xlsx") and not _is_auxiliary(f)
+]
+if not xlsx_files:
+    raise FileNotFoundError(
+        "No cut sheet found in data/. Place the GIS cut sheet xlsx there and retry."
+    )
+
+cut_sheet_original = os.path.join(DATA_DIR, sorted(xlsx_files)[0])
 cut_sheet_path     = os.path.join(DATA_DIR, "cut_sheet.xlsx")
 
 # Only copy if the file is not already named correctly (avoids a redundant I/O).
