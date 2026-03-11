@@ -173,6 +173,11 @@ git checkout dev   # active development branch
 **Always work on `dev`.** Only merge to `main` when a full project has been
 completed and tested end-to-end.
 
+The pipeline is **project-agnostic** — it works with any OLT site. The OLT token
+(e.g. `RC73E`, `MS90E`) is detected automatically from the sheet names and cable
+naming in the input files. RC73E is the most recently processed project but the
+code makes no assumptions about which site is being processed.
+
 ### Current state of `dev` (as of March 2026)
 
 | Commit | Description |
