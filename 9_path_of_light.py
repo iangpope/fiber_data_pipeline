@@ -407,10 +407,20 @@ def trace_port(wb, tap_name: str, port_info: dict) -> dict:
             continue
 
         # Look up this cable in the splitter output map.
+        # NOTE: An SE enclosure can have both an OPTICAL SPLITTERS section AND
+        # cables that simply pass through its SHEATHS (e.g. a feeder ring node
+        # that hosts a splitter for some taps but acts as a pass-through for
+        # other cable runs going further along the route). If the cable is not
+        # found as a splitter output, fall back to the SHEATHS pass-through logic.
         if current_cable not in splitter_map:
-            status    = f"Cable '{current_cable}' not listed as a splitter output at '{next_name}'"
-            fail_node = next_name
-            break
+            result = _trace_through_sheaths(wb, ws, current_cable, path)
+            if result is None:
+                status    = f"Cable '{current_cable}' not found as splitter output or SHEATHS pass-through at '{next_name}'"
+                fail_node = next_name
+                break
+            current_cable, current_next_node = result
+            continue
+
 
         # Found it — get the upstream backhaul cable via the COMMON port.
         common_cable = splitter_map[current_cable]
