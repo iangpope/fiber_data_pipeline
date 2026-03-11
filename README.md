@@ -48,8 +48,10 @@ Place the following files in the `data/` folder before running:
 |---|---|
 | `*.kmz` | KMZ network export from the GIS design tool (exactly one) |
 | `*.xlsx` | Raw cut sheet exported from the design tool (exactly one) |
+| `*HAF*.xlsx` | HAF address report (required for step 10 only) |
+| `Tap_Report_Template.xlsx` | Tap Report template (required for step 10 only) |
 
-The pipeline auto-detects both files by extension — no renaming required.
+The pipeline auto-detects input files by name pattern — no renaming required.
 
 ---
 
@@ -59,10 +61,12 @@ The pipeline auto-detects both files by extension — no renaming required.
 python3 0_run_pipeline_with_checkpoint.py
 ```
 
-The runner executes all 8 steps in order and **pauses after step 2** so you can
+The runner executes steps 1–8 in order and **pauses after step 2** so you can
 open `output/Colored_Connections_Table.xlsx` and verify that every cable has been
 assigned the correct directional color before the color-coding is applied to the
 full workbook.
+
+Steps 9 and 10 are run independently after the main pipeline completes.
 
 ### Options
 
@@ -94,9 +98,14 @@ python3 0_run_pipeline_with_checkpoint.py --start 5 --stop 7
 | 5 | `5_change_connections_column.py` | Combined formatted output | `output/Combined_Formatted_Output_processed.xlsx` |
 | 6 | `6_assign_addresses.py` | KMZ, processed output | `output/Combined_Formatted_Output_with_Addresses.xlsx` |
 | 7 | `7_process_taps.py` | Output with addresses | `output/Combined_Reordered_With_OTE.xlsx` |
-| 8 | `8_finalize.py` | Reordered with OTE | `output/Asbuilt_Workbook_post12.xlsx` ✅ |
+| 8 | `8_finalize.py` | Reordered with OTE | `output/Asbuilt_Workbook_post12.xlsx` |
+| 9 | `9_path_of_light.py` | Asbuilt workbook | `output/Path_of_Light_Confirmation.xlsx` |
+| 10 | `10_generate_tap_report.py` | HAF report, asbuilt workbook | `output/{OLT Name} Tap Report.xlsx` |
 
-The final deliverable is **`output/Asbuilt_Workbook_post12.xlsx`**.
+Steps 1–8 produce the finished splice workbook. Step 9 verifies PON continuity
+by tracing every tap PORT back to the OLT and reporting any broken paths. Step 10
+generates the field Tap Report by combining the HAF address data with the burn
+summary extracted from the asbuilt workbook.
 
 ---
 
@@ -104,18 +113,18 @@ The final deliverable is **`output/Asbuilt_Workbook_post12.xlsx`**.
 
 | Color | Meaning |
 |---|---|
-| 🟠 Orange | North |
-| 🟤 Brown | South |
-| 🟢 Green | East |
-| 🔵 Slate | West |
-| 🔴 Red | MST tap |
-| 🫒 Olive | OLT connection |
-| 🟡 Yellow | Fusion splice / PORT boundary |
-| 💙 Light blue | Splitter COMMON port |
-| 🩷 Light pink | 1×32 splitter output |
-| 🩷 Dark pink | 1×2 splitter output |
-| 🍑 Peach | MUX port |
-| 🐟 Salmon | DEMUX port |
+| Orange | North |
+| Brown | South |
+| Green | East |
+| Slate blue | West |
+| Red | MST tap |
+| Olive green | OLT connection |
+| Yellow | Fusion splice / PORT boundary |
+| Light blue | Splitter COMMON port |
+| Light pink | 1x32 splitter output |
+| Dark pink | 1x2 splitter output |
+| Peach | MUX port |
+| Salmon | DEMUX port |
 
 ---
 
@@ -135,7 +144,7 @@ constants, ensuring consistent colors and behavior across every step.
 
 ```
 Fiber Data Pipeline/
-├── data/                          # Input files (KMZ + cut sheet)
+├── data/                          # Input files (KMZ, cut sheet, HAF, template)
 ├── output/                        # All intermediate and final outputs
 ├── config.py                      # Shared constants and color fills
 ├── naming_utils.py                # Location naming and classification
@@ -147,7 +156,9 @@ Fiber Data Pipeline/
 ├── 5_change_connections_column.py
 ├── 6_assign_addresses.py
 ├── 7_process_taps.py
-└── 8_finalize.py
+├── 8_finalize.py
+├── 9_path_of_light.py
+└── 10_generate_tap_report.py
 ```
 
 ---

@@ -1,12 +1,39 @@
 #!/usr/bin/env python3
 """
-10_generate_tap_report.py -- Generate a completed Tap Report Excel workbook.
+10_generate_tap_report.py -- Generate a completed field Tap Report workbook.
 
-Combines two data sources:
-  1. HAF report      -- address-to-tap assignments (COMMENT column = tap name)
-  2. Asbuilt workbook -- PORT row burn summary (buffer/fiber per tap)
+This script combines two post-pipeline data sources to produce the Tap Report
+used in the field during splicing and testing:
 
-Writes to:  output/{OLT Name} Tap Report.xlsx
+  1. HAF report       -- address-to-tap assignments exported from the GIS
+                         system. The COMMENT column holds the tap name
+                         (e.g. RC73E_FT_001); address columns provide the
+                         civic address for each customer premise served.
+
+  2. Asbuilt workbook -- the finished splice workbook produced by step 8.
+                         Each FT sheet is scanned for PORT rows (identified
+                         by the PORT label in column J, placed there by step
+                         7). The buffer and fiber values on those rows form
+                         the burn summary written to the Tap Report.
+
+For each tap the script produces one row in the report containing:
+  - Col A : tap name
+  - Col B : port-by-port address list (unused ports labeled DARK)
+  - Col C : installation type (UNDERGROUND or AERIAL)
+  - Col D : total port count for the tap block (2 / 4 / 8 / 12)
+  - Col E : number of active (live) ports
+  - Col F : burn summary (e.g. BL / BL,OR) with directional background color
+
+SE enclosure names are appended after the tap rows as reference rows.
+Cell B3 of the Tap Report sheet is filled with the OLT site identifier.
+
+Reads:
+  data/Tap_Report_Template.xlsx
+  data/*HAF*.xlsx               (auto-detected; or pass as first argument)
+  output/Asbuilt_Workbook_post12.xlsx  (or pass as second argument)
+
+Writes:
+  output/{OLT Name} Tap Report.xlsx
 
 Usage:
   python3 10_generate_tap_report.py                          # auto-detects files
@@ -41,6 +68,10 @@ ASBUILT    = OUTPUT_DIR / "Asbuilt_Workbook_post12.xlsx"
 
 
 def _find_haf() -> Path:
+    """
+    Locate the HAF report in the data directory by glob pattern.
+    Raises FileNotFoundError if no matching file is present.
+    """
     matches = sorted(DATA_DIR.glob("*HAF*"))
     if not matches:
         raise FileNotFoundError("No HAF file found in data/ — place it there and retry.")
@@ -48,28 +79,36 @@ def _find_haf() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Formatting constants (matched from live Tap Report observation)
+# Formatting constants
+#
+# Background colors are matched to the live Tap Report standard.
+# BG_A applies to the tap name column (col A); BG_BEG applies to all other
+# data columns. Col F overrides BG_BEG with the directional color extracted
+# from the PORT row background in the asbuilt workbook.
 # ---------------------------------------------------------------------------
 
-BG_A   = "BDD6EE"   # light steel blue  — tap name column
-BG_BEG = "D9E2F3"   # pale blue         — address / hookup / port count cols
+BG_A   = "BDD6EE"   # light steel blue  — tap name column (col A)
+BG_BEG = "D9E2F3"   # pale blue         — address, hookup type, port count cols
 FONT   = "Arial"
 
 
 def _fill(hex6: str) -> PatternFill:
+    """Return a solid PatternFill for the given 6-character RGB hex color."""
     return PatternFill(fill_type="solid", fgColor=hex6.lstrip("#"))
 
 
 def _font(size: int = 11, bold: bool = False, color: str = "FF000000") -> Font:
+    """Return an Arial Font object. color must be 8-character ARGB (default: opaque black)."""
     return Font(name=FONT, size=size, bold=bold, color=color)
 
 
 def _align(horiz: str = "center", vert: str = "center", wrap: bool = False) -> Alignment:
+    """Return an Alignment object with the given horizontal, vertical, and wrap settings."""
     return Alignment(horizontal=horiz, vertical=vert, wrap_text=wrap)
 
 
 def _sort_key(name: str) -> int:
-    """Sort by trailing numeric suffix for natural ordering."""
+    """Return the trailing numeric suffix of a location name for natural sort ordering."""
     m = re.search(r"\d+$", str(name))
     return int(m.group()) if m else 0
 
@@ -80,10 +119,19 @@ def _sort_key(name: str) -> int:
 
 def parse_haf(haf_path: Path) -> tuple[str, dict]:
     """
-    Returns (olt_name, records).
+    Read the HAF report and return (olt_name, records).
 
-    records maps tap name (str) -> {"addresses": [...], "hookup_type": str}
-    Addresses are sorted by street name then house number, matching the JS script.
+    olt_name is inferred from the first non-empty COMMENT value using
+    naming_utils.parse_location_id (e.g. 'RC73E_FT_001' yields 'RC73E').
+
+    records maps each tap name to a dict:
+        {
+          "addresses":   [{"text": str, "street_name": str, "house_num": int}, ...],
+          "hookup_type": str  (e.g. 'UNDERGROUND')
+        }
+
+    Addresses within each tap are sorted by street name, then house number,
+    so that port assignments are consistent across runs.
     """
     wb      = openpyxl.load_workbook(haf_path, read_only=True, data_only=True)
     ws      = wb.active
@@ -152,11 +200,23 @@ _PORT_SIZES = [2, 4, 8, 12]
 
 def parse_burn_summaries(asbuilt_path: Path) -> dict:
     """
-    Returns dict mapping tap sheet name (upper-cased) ->
-        {"summary_text": str, "total_fibers": int, "block_size": int, "bg_color": str}
+    Scan every FT sheet in the asbuilt workbook and extract the burn summary
+    for each tap.
 
-    PORT rows are identified by having 'PORTn' text in column J (col 10), which
-    is where step 7 (7_process_taps.py) places the port label.
+    A PORT row is identified by a 'PORTn' label in column J (col 10), which
+    is placed there by step 7 (7_process_taps.py). For each PORT row the
+    BUFFER and FIBER values are read from the SHEATHS header row columns.
+    Fibers are grouped under their buffer tube, and the background color of
+    the buffer cell is retained as the directional color for col F of the
+    Tap Report.
+
+    Returns a dict mapping tap sheet name (upper-cased) to:
+        {
+          "summary_text": str   (e.g. 'BL / BL,OR\\nOR / GR'),
+          "total_fibers": int   (number of PORT rows = active fiber count),
+          "block_size":   int   (2 / 4 / 8 / 12 — smallest block >= total),
+          "bg_color":     str   (6-char RGB hex of the first buffer cell)
+        }
     """
     wb       = openpyxl.load_workbook(asbuilt_path, data_only=True)
     burn_map = {}
@@ -237,7 +297,11 @@ def parse_burn_summaries(asbuilt_path: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 def collect_se_names(asbuilt_path: Path) -> list[str]:
-    """Return all SE/distribution sheet names from the asbuilt workbook."""
+    """
+    Return all SE enclosure sheet names from the asbuilt workbook, sorted by
+    numeric suffix. These are appended as reference rows at the bottom of the
+    Tap Report after all tap rows have been written.
+    """
     wb = openpyxl.load_workbook(asbuilt_path, read_only=True)
     names = [n for n in wb.sheetnames if classify_sheet_name(n) == "S"]
     wb.close()
@@ -256,7 +320,18 @@ def write_tap_report(
     template_path:   Path,
     output_path:     Path,
 ) -> None:
+    """
+    Copy the Tap Report template and populate the 'Tap Report' sheet.
 
+    Writes one row per tap starting at row 10 (the first data row in the
+    template). Columns A-F are filled for each tap; formatting matches the
+    established field report standard (Arial 11pt, blue background tones,
+    directional color on col F). SE enclosure names are appended after the
+    last tap row as reference-only rows (col A only).
+
+    Cell B3 is written with the OLT site identifier (e.g. 'RC73E') to
+    populate the Node Number field in the template header block.
+    """
     shutil.copy(template_path, output_path)
     wb = openpyxl.load_workbook(output_path)
     ws = wb["Tap Report"]
@@ -345,6 +420,10 @@ def write_tap_report(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    """
+    Entry point. Resolves input paths, runs each processing stage in order,
+    and writes the completed Tap Report to the output directory.
+    """
     haf_path    = Path(sys.argv[1]) if len(sys.argv) > 1 else _find_haf()
     asbuilt     = Path(sys.argv[2]) if len(sys.argv) > 2 else ASBUILT
 
