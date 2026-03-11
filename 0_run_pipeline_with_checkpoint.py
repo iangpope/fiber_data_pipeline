@@ -2,7 +2,7 @@
 """
 0_run_pipeline_with_checkpoint.py -- Orchestrate the full Fiber Data Pipeline.
 
-Runs steps 1 through 8 in sequence, pausing after step 2 so the user can
+Runs steps 1 through 10 in sequence, pausing after step 2 so the user can
 open and verify the Colored Connections Table before committing to the full
 color-coding run. Each step is launched as a child process via subprocess so
 that import-time code in scripts like 4_format_top_section.py does not
@@ -35,15 +35,16 @@ from pathlib import Path
 # Step numbers are 1-based (the index + 1 in this list).
 # ---------------------------------------------------------------------------
 SCRIPT_ORDER = [
-    "1_coords_from_kmz.py",           # Step 1: Extract GPS coords from KMZ -> Connections_Table
-    "2_compute_all_directions.py",     # Step 2: Compute cable bearings -> Colored_Connections_Table
-    "3_colorize.py",                   # Step 3: Color cut sheet (main + splitter sections)
-    "4_format_top_section.py",         # Step 4: Insert metadata + direction bars at top
-    "5_change_connections_column.py",  # Step 5: Normalize CONNECTION column, shift/trim cols
-    "6_assign_addresses.py",           # Step 6: Match splice locations to nearest street address
-    "7_process_taps.py",               # Step 7: Reorder sheath blocks, shift port cols, label B3
-    "8_finalize.py",                   # Step 8: Fill enclosure labels, insert rows, trim columns
-    "9_path_of_light.py",             # Step 9: Trace every tap PORT to OLT -> PON report
+    "1_coords_from_kmz.py",           # Step 1:  Extract GPS coords from KMZ -> Connections_Table
+    "2_compute_all_directions.py",     # Step 2:  Compute cable bearings -> Colored_Connections_Table
+    "3_colorize.py",                   # Step 3:  Color cut sheet (main + splitter sections)
+    "4_format_top_section.py",         # Step 4:  Insert metadata + direction bars at top
+    "5_change_connections_column.py",  # Step 5:  Normalize CONNECTION column, shift/trim cols
+    "6_assign_addresses.py",           # Step 6:  Match splice locations to nearest street address
+    "7_process_taps.py",               # Step 7:  Reorder sheath blocks, shift port cols, label B3
+    "8_finalize.py",                   # Step 8:  Fill enclosure labels, insert rows, trim columns
+    "9_path_of_light.py",             # Step 9:  Trace every tap PORT to OLT -> PON report
+    "10_generate_tap_report.py",       # Step 10: Build field Tap Report from HAF + asbuilt workbook
 ]
 
 
@@ -130,20 +131,20 @@ def main() -> int:
         "--start",
         type=int,
         default=1,
-        help="Start from this step number (1-9). Useful to resume after a failure.",
+        help="Start from this step number (1-10). Useful to resume after a failure.",
     )
     parser.add_argument(
         "--stop",
         type=int,
-        default=9,
-        help="Stop after this step number (1-9).",
+        default=10,
+        help="Stop after this step number (1-10).",
     )
 
     args = parser.parse_args()
 
     # Validate step range arguments.
-    if not (1 <= args.start <= 9) or not (1 <= args.stop <= 9) or args.start > args.stop:
-        print("Invalid --start/--stop range. Use 1-9 and ensure start <= stop.")
+    if not (1 <= args.start <= 10) or not (1 <= args.stop <= 10) or args.start > args.stop:
+        print("Invalid --start/--stop range. Use 1-10 and ensure start <= stop.")
         return 2
 
     # Change to the directory containing this file so all relative paths
@@ -168,7 +169,7 @@ def main() -> int:
             # After step 2, pause for manual review unless the user is stopping at step 2 anyway.
             if script_name == CHECKPOINT_AFTER and i != args.stop:
                 if not ask_checkpoint(assume_yes=args.yes):
-                    print("\nStopped at checkpoint (steps 3-8 were not run).")
+                    print("\nStopped at checkpoint (steps 3-10 were not run).")
                     return 0
 
         print("\nPipeline complete.")
