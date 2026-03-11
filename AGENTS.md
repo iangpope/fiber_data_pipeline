@@ -151,10 +151,51 @@ All hex values are defined in `config.py` under the `COLOR` dict.
 
 ---
 
-## Branch Notes
+## Git Repository
 
-- `main` — stable release branch (legacy naming convention only)
-- `dev`  — active development; supports both new `_FT_`/`_SE_` and legacy naming
+**Remote:** `https://github.com/iangpope/fiber_data_pipeline.git`
 
-Current project in use: **RC73E** (new naming convention).
-MST tap identification uses nearest-FT-per-SE logic (not a flat distance threshold).
+```bash
+git clone https://github.com/iangpope/fiber_data_pipeline.git
+cd fiber_data_pipeline
+git checkout dev   # active development branch
+```
+
+---
+
+## Branch Strategy
+
+| Branch | Purpose |
+|---|---|
+| `main` | Stable release — legacy naming convention only (MIC... format) |
+| `dev` | Active development — supports both new `_FT_`/`_SE_` and legacy naming |
+
+**Always work on `dev`.** Only merge to `main` when a full project has been
+completed and tested end-to-end.
+
+### Current state of `dev` (as of March 2026)
+
+| Commit | Description |
+|---|---|
+| `218d5a7` | Add AGENTS.md |
+| `989612b` | Fix tracer: SE pass-through at SE nodes that also host splitters |
+| `beaef19` | Add `9_path_of_light.py` — PON continuity tracer |
+| `8a08a90` | Add professional README |
+| `d734a64` | Fix metadata header font (Calibri) |
+| `4b2a2b5` | Professional commenting across all scripts |
+| `5623781` | Renumber scripts 0–8; fix classify_sheet; clean terminal output |
+| `c3c0fa7` | Remove superseded scripts (old 3, 4, 8, 9, 10, 11, 12) |
+
+### Typical workflow
+
+```bash
+# Start a session
+git checkout dev
+git pull origin dev
+
+# After making changes
+git add <files>
+git commit -m "Short description of what changed"
+git push origin dev
+```
+
