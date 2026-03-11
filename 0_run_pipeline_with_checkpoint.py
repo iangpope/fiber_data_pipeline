@@ -43,7 +43,9 @@ SCRIPT_ORDER = [
     "6_assign_addresses.py",           # Step 6: Match splice locations to nearest street address
     "7_process_taps.py",               # Step 7: Reorder sheath blocks, shift port cols, label B3
     "8_finalize.py",                   # Step 8: Fill enclosure labels, insert rows, trim columns
+    "9_path_of_light.py",             # Step 9: Trace every tap PORT to OLT -> PON report
 ]
+
 
 # The manual checkpoint occurs after this script finishes (step 2).
 # The user must open the output file and confirm all direction colors are correct
@@ -128,20 +130,20 @@ def main() -> int:
         "--start",
         type=int,
         default=1,
-        help="Start from this step number (1-8). Useful to resume after a failure.",
+        help="Start from this step number (1-9). Useful to resume after a failure.",
     )
     parser.add_argument(
         "--stop",
         type=int,
-        default=8,
-        help="Stop after this step number (1-8).",
+        default=9,
+        help="Stop after this step number (1-9).",
     )
 
     args = parser.parse_args()
 
     # Validate step range arguments.
-    if not (1 <= args.start <= 8) or not (1 <= args.stop <= 8) or args.start > args.stop:
-        print("Invalid --start/--stop range. Use 1-8 and ensure start <= stop.")
+    if not (1 <= args.start <= 9) or not (1 <= args.stop <= 9) or args.start > args.stop:
+        print("Invalid --start/--stop range. Use 1-9 and ensure start <= stop.")
         return 2
 
     # Change to the directory containing this file so all relative paths
