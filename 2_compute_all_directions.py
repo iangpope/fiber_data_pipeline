@@ -287,6 +287,27 @@ def bearing_to_color(b: float) -> str:
 # Main processing: build and color the connections table
 # ---------------------------------------------------------------------------
 
+def is_diagonal_bearing(b: float) -> bool:
+    """
+    Return True if bearing b falls in a diagonal zone (between cardinal quadrants).
+
+    The four clean quadrants are:
+      North: [337.5, 360) or [0, 22.5)
+      East:  [67.5, 112.5)
+      South: [157.5, 202.5)
+      West:  [247.5, 292.5)
+
+    Any bearing outside these ranges is in a diagonal zone and the direction
+    assignment is less reliable.
+    """
+    return not (
+        b < 22.5 or b >= 337.5
+        or 67.5 <= b < 112.5
+        or 157.5 <= b < 202.5
+        or 247.5 <= b < 292.5
+    )
+
+
 def generate_colored_table(named_edges: list, location_coords: dict) -> None:
     """
     Build the Colored Connections Table Excel file.
@@ -323,6 +344,11 @@ def generate_colored_table(named_edges: list, location_coords: dict) -> None:
     name_to_coords = {name: coords for name, coords in named_edges}
     red_cables     = set()   # cable names confirmed as MST (colored red)
     all_colored_rows = []    # collect (entries, conn_cols, raw_colors) for two-pass output
+
+    # Debug/confidence tracking: populated during the main loop and printed at the end.
+    dbg_missing_cables  = []   # (location, cable_name) -- cable not found in KMZ
+    dbg_short_cables    = []   # (location, cable_name, length_m) -- cable shorter than 5 m
+    dbg_diagonal_cables = []   # (location, cable_name, bearing_deg, assigned_color)
 
     # ------------------------------------------------------------------
     # Pre-scan pass: identify MST tap locations.
@@ -421,11 +447,16 @@ def generate_colored_table(named_edges: list, location_coords: dict) -> None:
             # -- Look up the cable's coordinate geometry from the KMZ --
             coords = name_to_coords.get(cable)
             if not coords:
+                dbg_missing_cables.append((str(loc), str(cable)))
                 entries.append(cable)
                 continue
 
             # Ensure coordinate sequence starts at the current splice location.
-            if coords[-1] == latlon:
+            # Use geodesic distance instead of exact float equality to handle
+            # floating point imprecision in KMZ coordinates.
+            start_dist = geodesic(coords[0], latlon).meters
+            end_dist   = geodesic(coords[-1], latlon).meters
+            if end_dist < start_dist:
                 coords = list(reversed(coords))
 
             # -- MST override: color confirmed MST tap cables red --
@@ -461,10 +492,17 @@ def generate_colored_table(named_edges: list, location_coords: dict) -> None:
 
             # If the cable is shorter than 5 m, use its far endpoint.
             if walked == latlon:
+                cable_len = sum(
+                    geodesic(coords[i], coords[i + 1]).meters
+                    for i in range(len(coords) - 1)
+                )
+                dbg_short_cables.append((str(loc), str(cable), round(cable_len, 2)))
                 walked = coords[-1]
 
             b     = bearing(latlon, walked)
             color = bearing_to_color(b)
+            if is_diagonal_bearing(b):
+                dbg_diagonal_cables.append((str(loc), str(cable), round(b, 1), color))
             raw.append((col, color, b))
             entries.append(cable)
 
@@ -520,6 +558,37 @@ def generate_colored_table(named_edges: list, location_coords: dict) -> None:
                 ws.cell(row=ws.max_row, column=4 + idx).fill = fills["olt"]
             elif col in assigned:
                 ws.cell(row=ws.max_row, column=4 + idx).fill = fills[assigned[col]]
+
+    # ------------------------------------------------------------------
+    # Debug / confidence log: summarise rows that need manual scrutiny.
+    # ------------------------------------------------------------------
+    print("\n=== DEBUG / CONFIDENCE LOG ===")
+
+    if dbg_missing_cables:
+        print(f"\n[MISSING FROM KMZ] {len(dbg_missing_cables)} cable(s) not found "
+              f"— no geometry, no color assigned:")
+        for loc_name, cbl in dbg_missing_cables:
+            print(f"  {loc_name:30s}  {cbl}")
+    else:
+        print("\n[MISSING FROM KMZ] none")
+
+    if dbg_short_cables:
+        print(f"\n[SHORT CABLES < 5 m] {len(dbg_short_cables)} cable(s) — "
+              f"bearing computed from far endpoint, may be unreliable:")
+        for loc_name, cbl, length in dbg_short_cables:
+            print(f"  {loc_name:30s}  {cbl}  ({length} m)")
+    else:
+        print("\n[SHORT CABLES < 5 m] none")
+
+    if dbg_diagonal_cables:
+        print(f"\n[DIAGONAL BEARING] {len(dbg_diagonal_cables)} cable(s) — "
+              f"bearing falls between cardinal quadrants, direction less certain:")
+        for loc_name, cbl, b_val, color in dbg_diagonal_cables:
+            print(f"  {loc_name:30s}  {cbl}  bearing={b_val}°  assigned={color}")
+    else:
+        print("\n[DIAGONAL BEARING] none")
+
+    print("=== END DEBUG LOG ===\n")
 
     wb.save(OUTPUT_PATH)
     print(f"Colored table saved to {OUTPUT_PATH}")
