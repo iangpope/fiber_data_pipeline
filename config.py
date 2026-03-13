@@ -91,6 +91,19 @@ EMPTY_FILL = PatternFill()  # represents "no fill" / clear cell background
 
 
 # ---------------------------------------------------------------------------
+# Connection column value strings
+#
+# The raw Magellan export uses verbose markers in the CONNECTION column.
+# Step 5 normalizes them to the compact arrow form used in the final workbook.
+# Defining them here as constants means a single edit propagates everywhere.
+# ---------------------------------------------------------------------------
+CONN_RAW_FUSION     = "<- FUSION ->"      # raw Magellan: active fusion splice
+CONN_RAW_CONTINUOUS = "<- CONTINUOUS ->"  # raw Magellan: continuous pass-through
+CONN_FUSED          = "< --- >"           # normalized: connected / spliced fiber
+CONN_UNUSED         = "X"                 # unused fiber (same in raw and normalized)
+
+
+# ---------------------------------------------------------------------------
 # Public helper: resolve a color and return its cached PatternFill.
 # ---------------------------------------------------------------------------
 def get_fill(key_or_hex: str) -> PatternFill:

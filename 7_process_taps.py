@@ -351,10 +351,11 @@ def shift_port_columns(ws) -> int:
 def _detect_port_col_after_shift(sheet) -> int | None:
     """
     Find the PORT NAME column in the sheet after the column shift has been
-    applied. Scans rows 13 onward (skipping the metadata header block) in
+    applied. Locates the SHEATHS header row first, then scans below it in
     columns 8-15 for a cell value starting with "PORT".
     """
-    for row in sheet.iter_rows(min_row=13, max_row=sheet.max_row):
+    hdr = find_header_row(sheet) or 12
+    for row in sheet.iter_rows(min_row=hdr + 1, max_row=sheet.max_row):
         for col in range(8, 16):
             if len(row) >= col:
                 v = row[col - 1].value
@@ -366,10 +367,11 @@ def _detect_port_col_after_shift(sheet) -> int | None:
 def _count_ports(sheet, port_col: int) -> int:
     """
     Count the number of PORT rows in the sheet by scanning port_col from
-    row 13 onward.
+    the row after the SHEATHS header.
     """
+    hdr = find_header_row(sheet) or 12
     count = 0
-    for row in sheet.iter_rows(min_row=13, max_row=sheet.max_row):
+    for row in sheet.iter_rows(min_row=hdr + 1, max_row=sheet.max_row):
         if len(row) >= port_col:
             val = row[port_col - 1].value
             if val and str(val).strip().upper().startswith("PORT"):
@@ -379,8 +381,12 @@ def _count_ports(sheet, port_col: int) -> int:
 
 def label_port_ote(sheet, count: int) -> None:
     """
-    Write the OTE enclosure size label into cell B3 based on the number of
-    PORT rows found, and set B4 to 1 (all tap enclosures use 1 splice tray).
+    Write the OTE enclosure size label into the Enclosure cell and set the
+    tray count to 1 (all tap enclosures use 1 splice tray).
+
+    The target rows are found by scanning column A for the "Enclosure:" and
+    "No. of Trays:" labels rather than relying on fixed row numbers, making
+    this resilient to changes in the metadata block height.
 
     OTE sizes are:
       2 PORT OTE  -- up to 2 ports
@@ -388,15 +394,29 @@ def label_port_ote(sheet, count: int) -> None:
       8 PORT OTE  -- up to 8 ports
       12 PORT OTE -- up to 12 ports
     """
+    enc_row = trays_row = None
+    for r in range(1, min(sheet.max_row, 20) + 1):
+        v = str(sheet.cell(r, 1).value or "").strip()
+        if v == "Enclosure:":
+            enc_row = r
+        elif v == "No. of Trays:":
+            trays_row = r
+        if enc_row and trays_row:
+            break
+
+    if enc_row is None:
+        return   # sheet does not have standard metadata layout
+
     if count <= 2:
-        sheet["B3"] = "2 PORT OTE"
+        sheet.cell(row=enc_row, column=2).value = "2 PORT OTE"
     elif count <= 4:
-        sheet["B3"] = "4 PORT OTE"
+        sheet.cell(row=enc_row, column=2).value = "4 PORT OTE"
     elif count <= 8:
-        sheet["B3"] = "8 PORT OTE"
+        sheet.cell(row=enc_row, column=2).value = "8 PORT OTE"
     elif count <= 12:
-        sheet["B3"] = "12 PORT OTE"
-    sheet["B4"] = 1   # tap enclosures always have 1 splice tray
+        sheet.cell(row=enc_row, column=2).value = "12 PORT OTE"
+    if trays_row:
+        sheet.cell(row=trays_row, column=2).value = 1   # always 1 splice tray
 
 
 def label_enclosure(ws) -> bool:

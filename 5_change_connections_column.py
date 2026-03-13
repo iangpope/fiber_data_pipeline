@@ -24,6 +24,7 @@ import re
 import os
 
 from naming_utils import is_location_sheet
+from config import CONN_RAW_FUSION, CONN_RAW_CONTINUOUS, CONN_FUSED, COLOR
 
 
 # ---------------------------------------------------------------------------
@@ -117,8 +118,8 @@ def process_main_section(ws, sheet_type: str) -> None:
         val  = str(cell.value).strip() if cell.value else ""
 
         # Normalize verbose connection markers to the compact arrow symbol.
-        if val in ("<- CONTINUOUS ->", "<- FUSION ->"):
-            cell.value     = "< --- >"
+        if val in (CONN_RAW_CONTINUOUS, CONN_RAW_FUSION):
+            cell.value     = CONN_FUSED
             cell.alignment = Alignment(horizontal="center")
         elif val.upper() == "X":
             # X marks a splice count or break; center it for readability.
@@ -135,7 +136,7 @@ def process_main_section(ws, sheet_type: str) -> None:
             # Preserve yellow on tap PORT rows; clear it everywhere else.
             if not (sheet_type == "tap" and port_val.startswith("PORT")):
                 fg = cell.fill.fgColor.rgb if cell.fill and cell.fill.fgColor else ""
-                if fg and "FFFF00" in fg:
+                if fg and COLOR["FUSION"] in fg:
                     cell.fill = PatternFill(fill_type=None)
 
 
@@ -170,8 +171,8 @@ def process_optical_section(ws) -> None:
         val  = str(cell.value).strip() if cell.value else ""
 
         # Normalize connection markers.
-        if val in ("<- CONTINUOUS ->", "<- FUSION ->"):
-            cell.value     = "< --- >"
+        if val in (CONN_RAW_CONTINUOUS, CONN_RAW_FUSION):
+            cell.value     = CONN_FUSED
             cell.alignment = Alignment(horizontal="center")
         elif val.upper() == "X":
             cell.alignment = Alignment(horizontal="center")
@@ -179,7 +180,7 @@ def process_optical_section(ws) -> None:
         # Clear stray yellow fill.
         if val.upper() != "X":
             fg = cell.fill.fgColor.rgb if cell.fill and cell.fill.fgColor else ""
-            if fg and "FFFF00" in fg:
+            if fg and COLOR["FUSION"] in fg:
                 cell.fill = PatternFill(fill_type=None)
 
     # If the header row has DEVICE UUID in column G, remove that column from

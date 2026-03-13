@@ -31,12 +31,14 @@ import os
 import re
 import openpyxl
 
-from config import DATA_DIR, OUTPUT_DIR, COLOR, FILLS, get_fill
+from config import DATA_DIR, OUTPUT_DIR, COLOR, FILLS, get_fill, CONN_RAW_FUSION
 from naming_utils import (
     is_location_sheet,
     sheet_has_optical_splitters,
     optical_splitters_row,
     safe_fill_hex,
+    find_header_row,
+    find_col_by_header,
 )
 
 
@@ -99,29 +101,39 @@ def load_cable_colors() -> dict:
 def _apply_main_section_colors(ws, conn_dict: dict, splitter_row: int | None) -> None:
     """
     Apply directional and special-purpose colors to all rows in the main
-    SHEATHS section (rows 7 through the row before OPTICAL SPLITTERS, or
-    to the last row if there is no OPTICAL SPLITTERS section).
+    SHEATHS section (from the row after the header through the row before
+    OPTICAL SPLITTERS, or to the last row if there is no OPTICAL SPLITTERS
+    section).
 
-    Left-side columns (A-I, col 1-9):
-      The cable name is read from column B (col 2). If a color exists in
-      conn_dict for that cable, the entire row is filled with that color.
-      The first occurrence of each cable name also gets columns A-B filled
-      yellow to mark the "splice start" of that sheath.
+    Left-side columns (col 1 through CONNECTION-1):
+      The cable name is read from the SHEATH NAME column. If a color exists in
+      conn_dict for that cable, the entire left side is filled with that color.
+      The first occurrence of each cable name also gets the UUID and SHEATH NAME
+      columns filled yellow to mark the "splice start" of that sheath block.
 
-    Right-side columns (K-T, col 11-20):
-      Column O (col 15) is searched for the cable name on the far end of
-      the splice. PORT rows receive a yellow fill. For splitter sheets,
-      port type colors (COMMON, 1x32, 1x2, MUX, DEMUX) are applied based
-      on the value in column Q (device port type) and column S (device name).
+    Right-side columns (CONNECTION+1 through sheet end):
+      The right-side SHEATH NAME identifies the far-end cable. PORT rows receive
+      a yellow fill. For splitter sheets, port type colors (COMMON, 1x32, 1x2,
+      MUX, DEMUX) are applied based on the PORT NAME and DEVICE NAME columns.
     """
+    # Detect column positions from the SHEATHS header row so the function is
+    # resilient to column additions or reordering in future Magellan exports.
+    hdr_row      = find_header_row(ws, "SHEATH UUID") or 6
+    sheath_col   = find_col_by_header(ws, hdr_row, "SHEATH NAME")                      or 2
+    conn_col     = find_col_by_header(ws, hdr_row, "CONNECTION")                        or 10
+    r_sheath_col = find_col_by_header(ws, hdr_row, "SHEATH NAME", after_col=conn_col)   or 15
+    port_col     = find_col_by_header(ws, hdr_row, "PORT NAME")                         or 17
+    device_col   = find_col_by_header(ws, hdr_row, "DEVICE NAME")                       or 19
+    right_end    = ws.max_column
+
     is_splitter = splitter_row is not None
     seen_left: set = set()   # tracks cables already colored on the left side
 
     end_row = (splitter_row - 1) if splitter_row else ws.max_row
 
-    for r in range(7, end_row + 1):
+    for r in range(hdr_row + 1, end_row + 1):
         # -- Left-side (incoming sheath) --
-        val_left = ws.cell(row=r, column=2).value
+        val_left = ws.cell(row=r, column=sheath_col).value
         if isinstance(val_left, str):
             val_left = val_left.strip()
             fill = conn_dict.get(val_left)
@@ -131,62 +143,62 @@ def _apply_main_section_colors(ws, conn_dict: dict, splitter_row: int | None) ->
                 fill = COLOR["MST"]
 
             if fill and fill in FILLS:
-                # Color the full left-side group (cols A through I).
-                for c in range(1, 10):
+                # Color the full left side (UUID column through CONNECTION-1).
+                for c in range(1, conn_col):
                     ws.cell(row=r, column=c).fill = FILLS[fill]
 
-                # On the first row for this cable, mark cols A-B yellow to
-                # indicate the start of this sheath's splice block.
+                # On the first row for this cable, mark the UUID and SHEATH NAME
+                # columns yellow to indicate the start of this sheath's splice block.
                 if val_left not in seen_left:
-                    ws.cell(row=r, column=1).fill = FILLS[COLOR["FUSION"]]
-                    ws.cell(row=r, column=2).fill = FILLS[COLOR["FUSION"]]
+                    ws.cell(row=r, column=1).fill          = FILLS[COLOR["FUSION"]]
+                    ws.cell(row=r, column=sheath_col).fill = FILLS[COLOR["FUSION"]]
                     seen_left.add(val_left)
 
-        # -- Center column (J, col 10) -- fusion marker --
-        if str(ws.cell(row=r, column=10).value).strip() == "<- FUSION ->":
-            ws.cell(row=r, column=10).fill = FILLS[COLOR["FUSION"]]
+        # -- CONNECTION column -- fusion marker --
+        if str(ws.cell(row=r, column=conn_col).value or "").strip() == CONN_RAW_FUSION:
+            ws.cell(row=r, column=conn_col).fill = FILLS[COLOR["FUSION"]]
 
         # -- Right-side (outgoing sheath) --
-        val_right = ws.cell(row=r, column=15).value
+        val_right = ws.cell(row=r, column=r_sheath_col).value
         if isinstance(val_right, str):
             val_right = val_right.strip()
             fill = conn_dict.get(val_right)
             if not fill and MST_CABLE_RX.match(val_right):
                 fill = COLOR["MST"]
             if fill and fill in FILLS:
-                for c in range(11, 21):
+                for c in range(conn_col + 1, right_end + 1):
                     ws.cell(row=r, column=c).fill = FILLS[fill]
 
         # -- PORT rows: override right-side with yellow --
         # PORT rows mark the boundary of a fiber port block in tap sheets.
         # They must be yellow so step 7 can detect and reorder them.
-        for c in range(11, 21):
+        for c in range(conn_col + 1, right_end + 1):
             val = ws.cell(row=r, column=c).value
             if isinstance(val, str) and "PORT" in val.upper() and val.upper() != "PORT NAME":
-                for cc in range(11, 21):
+                for cc in range(conn_col + 1, right_end + 1):
                     ws.cell(row=r, column=cc).fill = FILLS[COLOR["FUSION"]]
                 break   # stop checking once PORT is found on this row
 
         # -- Splitter port type colors (right side, splitter sheets only) --
-        # Column Q (17) contains the port direction: COMMON, OUT, CH
-        # Column S (19) contains the device name: 1X2, 1X32, MUX, DEMUX
+        # PORT NAME column contains the port direction: COMMON, OUT, CH
+        # DEVICE NAME column contains the device type: 1X2, 1X32, MUX, DEMUX
         if is_splitter:
-            q_val = str(ws.cell(row=r, column=17).value or "").upper().strip()
-            s_val = str(ws.cell(row=r, column=19).value or "").upper().strip()
+            q_val = str(ws.cell(row=r, column=port_col).value   or "").upper().strip()
+            s_val = str(ws.cell(row=r, column=device_col).value or "").upper().strip()
 
             if "COMMON" in q_val:
-                for c in range(11, 21):
+                for c in range(conn_col + 1, right_end + 1):
                     ws.cell(row=r, column=c).fill = FILLS[COLOR["COMMON"]]
             elif "OUT" in q_val:
                 # Distinguish 1x2 (dark pink) from 1x32 (light pink) splitter outputs.
                 key = "1X2" if "1X2" in s_val else "1X32"
-                for c in range(11, 21):
+                for c in range(conn_col + 1, right_end + 1):
                     ws.cell(row=r, column=c).fill = FILLS[COLOR[key]]
             elif "CH" in q_val and "MUX" in s_val and "DEMUX" not in s_val:
-                for c in range(11, 21):
+                for c in range(conn_col + 1, right_end + 1):
                     ws.cell(row=r, column=c).fill = FILLS[COLOR["MUX"]]
             elif "CH" in q_val and "DEMUX" in s_val:
-                for c in range(11, 21):
+                for c in range(conn_col + 1, right_end + 1):
                     ws.cell(row=r, column=c).fill = FILLS[COLOR["DEMUX"]]
 
 
@@ -198,76 +210,86 @@ def _apply_optical_splitter_colors(ws, conn_dict: dict, splitter_row: int) -> No
     """
     Apply device-type colors to the OPTICAL SPLITTERS sub-table.
 
-    Left columns (A-D, col 1-4) are colored by the device type reported in
-    column C (device port direction: COMMON, 1X32, 1X2, MUX, DEMUX).
-
-    Right columns (F-O, col 6-15) are colored by the connected-to device type
-    reported in columns G and H. If the cable name in column N matches an entry
-    in conn_dict (the step 2 color table), the connection color overrides the
-    device-type color on the right side.
+    Left columns (up to CONNECTION) are colored by the device type in the
+    PORT NAME column (COMMON, 1X32, 1X2, MUX, DEMUX). Right columns (after
+    CONNECTION) are colored by the connected device type from the right-side
+    PORT NAME and DEVICE NAME columns. If the far-end SHEATH NAME matches an
+    entry in conn_dict, the directional color overrides the device-type color.
     """
-    header_row = None   # will be set when the CONNECTION header row is found
+    # Locate the header row of the OPTICAL SPLITTERS sub-table by scanning for
+    # a "CONNECTION" cell in the rows immediately following the section label.
+    spl_hdr_row = None
+    for r in range(splitter_row + 1, min(ws.max_row, splitter_row + 5) + 1):
+        for c in range(1, min(ws.max_column, 20) + 1):
+            v = ws.cell(r, c).value
+            if isinstance(v, str) and v.strip().upper() == "CONNECTION":
+                spl_hdr_row = r
+                break
+        if spl_hdr_row:
+            break
 
-    for r in range(splitter_row + 1, ws.max_row + 1):
-        # Read relevant columns for this row.
-        val_b = str(ws.cell(row=r, column=2).value or "")
-        val_c = str(ws.cell(row=r, column=3).value or "")
-        val_e = str(ws.cell(row=r, column=5).value or "").strip().upper()
-        val_g = str(ws.cell(row=r, column=7).value or "")
-        val_h = str(ws.cell(row=r, column=8).value or "")
-        val_n = str(ws.cell(row=r, column=14).value or "").strip()
+    if spl_hdr_row is None:
+        return   # no header row found; skip this section
 
-        # The first row where column E reads "CONNECTION" is the header row;
-        # skip it but note its position so we can start processing data below it.
-        if val_e == "CONNECTION":
-            header_row = r
-            continue
+    # Detect column positions from the splitter sub-table header row.
+    l_device_col    = find_col_by_header(ws, spl_hdr_row, "DEVICE NAME")                          or 2
+    l_port_col      = find_col_by_header(ws, spl_hdr_row, "PORT NAME")                             or 3
+    s_conn_col      = find_col_by_header(ws, spl_hdr_row, "CONNECTION")                            or 5
+    r_port_col      = find_col_by_header(ws, spl_hdr_row, "PORT NAME",   after_col=s_conn_col)     or 7
+    r_device_col    = find_col_by_header(ws, spl_hdr_row, "DEVICE NAME", after_col=s_conn_col)     or 8
+    sheath_name_col = find_col_by_header(ws, spl_hdr_row, "SHEATH NAME", after_col=s_conn_col)     or 13
+    right_end       = ws.max_column
 
-        if header_row is None or r <= header_row:
-            continue   # haven't found the header row yet
+    for r in range(spl_hdr_row + 1, ws.max_row + 1):
+        val_b = str(ws.cell(row=r, column=l_device_col).value   or "")
+        val_c = str(ws.cell(row=r, column=l_port_col).value     or "")
+        val_e = str(ws.cell(row=r, column=s_conn_col).value     or "").strip().upper()
+        val_g = str(ws.cell(row=r, column=r_port_col).value     or "")
+        val_h = str(ws.cell(row=r, column=r_device_col).value   or "")
+        val_n = str(ws.cell(row=r, column=sheath_name_col).value or "").strip()
 
-        # -- Left-side colors (cols A-D): device type of the left device --
+        # -- Left-side colors: device type of the left port --
         if "COMMON" in val_c.upper():
-            for c in range(1, 5):
+            for c in range(1, s_conn_col):
                 ws.cell(row=r, column=c).fill = get_fill(COLOR["COMMON"])
         elif "1X32" in val_b.upper():
-            for c in range(1, 5):
+            for c in range(1, s_conn_col):
                 ws.cell(row=r, column=c).fill = get_fill(COLOR["1X32"])
         elif "1X2" in val_b.upper():
-            for c in range(1, 5):
+            for c in range(1, s_conn_col):
                 ws.cell(row=r, column=c).fill = get_fill(COLOR["1X2"])
         elif "MUX" in val_b.upper() and "DEMUX" not in val_b.upper():
-            for c in range(1, 5):
+            for c in range(1, s_conn_col):
                 ws.cell(row=r, column=c).fill = get_fill(COLOR["MUX"])
         elif "DEMUX" in val_b.upper():
-            for c in range(1, 5):
+            for c in range(1, s_conn_col):
                 ws.cell(row=r, column=c).fill = get_fill(COLOR["DEMUX"])
 
-        # -- Right-side colors (cols F-O): device type of the connected device --
+        # -- Right-side colors: device type of the connected port --
         if "COMMON" in val_g.upper():
-            for c in range(6, 16):
+            for c in range(s_conn_col + 1, right_end + 1):
                 ws.cell(row=r, column=c).fill = get_fill(COLOR["COMMON"])
         elif "1X32" in val_h.upper():
-            for c in range(6, 16):
+            for c in range(s_conn_col + 1, right_end + 1):
                 ws.cell(row=r, column=c).fill = get_fill(COLOR["1X32"])
         elif "1X2" in val_h.upper():
-            for c in range(6, 16):
+            for c in range(s_conn_col + 1, right_end + 1):
                 ws.cell(row=r, column=c).fill = get_fill(COLOR["1X2"])
         elif "MUX" in val_h.upper() and "DEMUX" not in val_h.upper():
-            for c in range(6, 16):
+            for c in range(s_conn_col + 1, right_end + 1):
                 ws.cell(row=r, column=c).fill = get_fill(COLOR["MUX"])
         elif "DEMUX" in val_h.upper():
-            for c in range(6, 16):
+            for c in range(s_conn_col + 1, right_end + 1):
                 ws.cell(row=r, column=c).fill = get_fill(COLOR["DEMUX"])
 
         # Override right-side with connection color if available in the color table.
         if val_n in conn_dict:
-            for c in range(6, 16):
+            for c in range(s_conn_col + 1, right_end + 1):
                 ws.cell(row=r, column=c).fill = get_fill(conn_dict[val_n])
 
-        # Mark fusion splices in column E yellow.
-        if val_e == "<- FUSION ->":
-            ws.cell(row=r, column=5).fill = get_fill(COLOR["FUSION"])
+        # Mark fusion splices in the CONNECTION column yellow.
+        if val_e == CONN_RAW_FUSION:
+            ws.cell(row=r, column=s_conn_col).fill = get_fill(COLOR["FUSION"])
 
 
 # ---------------------------------------------------------------------------
@@ -313,16 +335,19 @@ def main() -> None:
         ws         = wb[sheetname]
         conn_dict  = cable_colors.get(sheetname, {})
 
-        # -- Pre-pass: delete rows that are entirely blank or that only have
-        #    values in columns G-I (junk padding columns from the raw export).
-        #    Scanning from the bottom prevents row index shifting.
+        # -- Pre-pass: remove sub-circuit rows injected by Magellan and blank rows.
+        #
+        # Magellan inserts annotation rows between fiber rows that contain only
+        # wavelength/circuit data (the sub-circuit columns). These rows have no
+        # SHEATH UUID in column A. Every real data row has a UUID in column A;
+        # section header rows ("SHEATHS", "OPTICAL SPLITTERS") also have text
+        # in column A. Rows with a None in column A are safe to delete.
+        #
+        # Scanning from the bottom prevents row-index shifting during deletion.
+        hdr_row = find_header_row(ws, "SHEATH UUID") or 6
         rows_to_delete = []
-        for r in range(ws.max_row, 6, -1):
-            row       = [ws.cell(row=r, column=c).value for c in range(1, 21)]
-            g_to_i    = row[6:9]        # columns G, H, I (index 6-8)
-            non_g_to_i = row[:6] + row[9:]
-            # Delete if the row is completely empty, or if only G-I have values.
-            if not any(row) or (any(g_to_i) and not any(non_g_to_i)):
+        for r in range(ws.max_row, hdr_row, -1):
+            if ws.cell(row=r, column=1).value is None:
                 rows_to_delete.append(r)
         for r in rows_to_delete:
             ws.delete_rows(r)

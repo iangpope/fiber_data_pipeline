@@ -76,8 +76,23 @@ def _fill_enclosure_labels(sheet, sheet_name: str) -> None:
     If both cells already have values, this function returns without changes
     to avoid overwriting anything written by step 7.
     """
-    enc_cell   = sheet.cell(row=3, column=2)
-    trays_cell = sheet.cell(row=4, column=2)
+    # Locate the enclosure and tray rows by scanning column A for the label
+    # text rather than relying on fixed row numbers.
+    enc_row = trays_row = None
+    for r in range(1, min(sheet.max_row, 20) + 1):
+        v = str(sheet.cell(r, 1).value or "").strip()
+        if v == "Enclosure:":
+            enc_row = r
+        elif v == "No. of Trays:":
+            trays_row = r
+        if enc_row and trays_row:
+            break
+
+    if enc_row is None or trays_row is None:
+        return   # sheet does not have standard metadata layout
+
+    enc_cell   = sheet.cell(row=enc_row,   column=2)
+    trays_cell = sheet.cell(row=trays_row, column=2)
 
     # Skip if both enclosure and tray values are already populated.
     if (enc_cell.value and str(enc_cell.value).strip() and
@@ -209,8 +224,12 @@ def run_part_a(wb) -> None:
     for name in wb.sheetnames:
         sheet = wb[name]
         # Only process sheets that follow the standard location sheet layout.
-        if (sheet.cell(row=3, column=1).value != "Enclosure:" or
-                sheet.cell(row=4, column=1).value != "No. of Trays:"):
+        # Qualify the sheet by scanning column A for the "Enclosure:" label
+        # rather than assuming it always sits at a fixed row number.
+        if not any(
+            str(sheet.cell(r, 1).value or "").strip() == "Enclosure:"
+            for r in range(1, min(sheet.max_row, 20) + 1)
+        ):
             continue
         _fill_enclosure_labels(sheet, name)
         _insert_demux_mst_rows(sheet)
