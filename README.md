@@ -44,10 +44,10 @@ pip install openpyxl pandas geopy
 
 Place the following files in the `data/` folder before running:
 
-| File | Description |
+| File pattern | Description |
 |---|---|
 | `*.kmz` | KMZ network export from the GIS design tool (exactly one) |
-| `*.xlsx` | Raw cut sheet exported from the design tool (exactly one) |
+| `*SPLICE*REPORTS*FIBER*.xlsx` | Raw cut sheet (Splice Reports) exported from Magellan (exactly one) |
 | `*HAF*.xlsx` | HAF address report (required for step 10 only) |
 | `Tap_Report_Template.xlsx` | Tap Report template (required for step 10 only) |
 
@@ -65,6 +65,13 @@ The runner executes steps 1–8 in order and **pauses after step 2** so you can
 open `output/Colored_Connections_Table.xlsx` and verify that every cable has been
 assigned the correct directional color before the color-coding is applied to the
 full workbook.
+
+Step 2 also prints a **debug/confidence log** to the terminal listing:
+- Cables not found in the KMZ (no geometry, no color assigned)
+- Cables shorter than 5 m (bearing taken from far endpoint, less reliable)
+- Cables whose bearing falls in a diagonal zone (direction assignment less certain)
+
+Review these before approving the checkpoint.
 
 Steps 9 and 10 are run independently after the main pipeline completes.
 
@@ -132,8 +139,8 @@ summary extracted from the asbuilt workbook.
 
 | Module | Purpose |
 |---|---|
-| `config.py` | Central color palette, directory paths, and shared `PatternFill` cache |
-| `naming_utils.py` | Location name parsing and classification (new `_FT_`/`_SE_` and legacy `MIC...` formats) |
+| `config.py` | Central color palette, `PatternFill` cache, directory paths, and connection column value constants (`CONN_RAW_FUSION`, `CONN_FUSED`, etc.) |
+| `naming_utils.py` | Location name parsing and classification (new `_FT_`/`_SE_` and legacy `MIC...` formats); worksheet column/row detection utilities |
 
 All pipeline scripts import from these modules rather than defining their own
 constants, ensuring consistent colors and behavior across every step.
@@ -172,7 +179,13 @@ compatibility with the legacy `MIC...` naming used in earlier projects.
 Key improvements over `main`:
 - Scripts renumbered 0–8 (no gaps) with a single orchestrating runner
 - MST tap detection uses nearest-FT-per-SE logic instead of a fixed distance threshold
-- Column detection is header-based rather than hardcoded, making scripts resilient
-  to column reordering in future cut sheet exports
+- Cable orientation uses geodesic nearest-endpoint comparison instead of exact float
+  equality, correctly handling floating point differences between KMZ and table coordinates
+- Column detection is header-based throughout steps 3, 5, 7, and 8 — resilient to
+  column additions or reordering in future Magellan exports
+- Metadata row detection (enclosure label, tray count) uses column-A content scan
+  instead of fixed row numbers — resilient to changes in the metadata block height
+- Connection column value strings centralized in `config.py` as named constants
+- Step 2 emits a debug/confidence log flagging cables to scrutinize before checkpoint approval
 - All colors, paths, and shared logic centralized in `config.py` and `naming_utils.py`
 - Professional commenting throughout all scripts
