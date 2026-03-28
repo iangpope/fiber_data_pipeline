@@ -1,0 +1,4 @@
+# Virtual environment — not tracked in git
+.venv/
+__pycache__/
+*.pyc
