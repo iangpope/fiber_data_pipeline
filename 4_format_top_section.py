@@ -51,11 +51,6 @@ from naming_utils import safe_fill_hex
 # ---------------------------------------------------------------------------
 # File paths
 # ---------------------------------------------------------------------------
-CONN_TABLE_PATH = "output/Colored_Connections_Table.xlsx"
-INPUT_WB_PATH   = "output/Colorized_Cut_Sheet_Final_v7_highlighted.xlsx"
-OUTPUT_WB_PATH  = "output/Combined_Formatted_Output.xlsx"
-
-DEBUG_DUMP_PATH = "output/step5_bar_debug.csv"
 DEBUG_ENABLED   = True   # write classification details to CSV for review
 
 
@@ -274,334 +269,294 @@ def guess_olt_token(sheet_name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Load connection table data
+# Main entry point
 # ---------------------------------------------------------------------------
 
-conn_wb    = load_workbook(CONN_TABLE_PATH)
-conn_sheet = conn_wb["Colored Connections"]
+def main(data_dir: str = "data", output_dir: str = "output") -> None:
+    """
+    Run step 4: insert metadata headers and direction bar legends into each
+    location sheet of the colorized cut sheet workbook.
 
-# conn_dict: location -> list of (fiber, locA, locB, fill_hex) for each cable
-# coords:    location -> (latitude, longitude)
-conn_dict: dict = {}
-coords:    dict = {}
-
-for row in conn_sheet.iter_rows(min_row=2):   # row 1 is the header
-    loc = row[0].value
-    if loc is None:
-        continue
-
-    lat = row[1].value
-    lon = row[2].value
-    coords[str(loc).strip()] = (lat, lon)
-
-    connections = []
-    for cell in row[3:]:   # connection columns start at index 3 (column D)
-        val = cell.value
-        if not val:
-            continue
-        fiber, locA, locB = parse_connection_value(val)
-        if not fiber:
-            continue
-        # safe_fill_hex guards against indexed/theme colors from the connections table
-        fill_color = safe_fill_hex(cell)
-        connections.append((fiber, str(locA), str(locB), (fill_color or "").upper()))
-
-    conn_dict[str(loc).strip()] = connections
-
-
-# ---------------------------------------------------------------------------
-# Load the colorized cut sheet workbook
-# ---------------------------------------------------------------------------
-
-wb = load_workbook(INPUT_WB_PATH)
-
-# Shared style objects used in the metadata block.
-yellow_fill = PatternFill(start_color=LABEL_FILL, end_color=LABEL_FILL, fill_type="solid")
-white_fill  = PatternFill(start_color="FFFFFF",   end_color="FFFFFF",   fill_type="solid")
-
-thin_side  = Side(border_style="thin",  color="000000")
-thick_side = Side(border_style="thick", color="000000")
-
-# Accumulate debug classification rows for the CSV export.
-debug_rows = []
-run_id     = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-# ---------------------------------------------------------------------------
-# Process each sheet
-# ---------------------------------------------------------------------------
-
-for sheet_name in wb.sheetnames:
-    loc_key = str(sheet_name).strip()
-    if loc_key not in conn_dict:
-        continue   # sheet not in connections table; skip
-
-    ws = wb[sheet_name]
-
-    # Remove any previously inserted top section so re-running is safe.
-    sheaths_row = find_row_in_colA(ws, "SHEATHS")
-    if sheaths_row and sheaths_row > 1:
-        ws.delete_rows(1, sheaths_row - 1)
-
-    # Determine the OLT site token for this sheet (used to detect OLT cables).
-    olt_id = guess_olt_token(loc_key)
-
-    # Build the GPS coordinate strings for display in the metadata block.
-    lat_val, lon_val = coords.get(loc_key, (None, None))
-    lat_str = f"{lat_val:.5f}" if isinstance(lat_val, (float, int)) else (lat_val or "")
-    lon_str = f"{lon_val:.5f}" if isinstance(lon_val, (float, int)) else (lon_val or "")
-
-    # Metadata label/value pairs for the A2:B7 block.
-    labels = ["Splice ID:", "Enclosure:", "No. of Trays:", "Location:", "Latitude:", "Longitude:"]
-    values = [loc_key, "", "", "", lat_str, lon_str]
+    Parameters
+    ----------
+    data_dir : str
+        Unused by this step (all inputs come from output_dir).
+    output_dir : str
+        Directory containing the step 2 and step 3 output workbooks and
+        where the step 4 output will be written.
+    """
+    conn_table_path = os.path.join(output_dir, "Colored_Connections_Table.xlsx")
+    input_wb_path   = os.path.join(output_dir, "Colorized_Cut_Sheet_Final_v7_highlighted.xlsx")
+    output_wb_path  = os.path.join(output_dir, "Combined_Formatted_Output.xlsx")
+    debug_dump_path = os.path.join(output_dir, "step5_bar_debug.csv")
 
     # ------------------------------------------------------------------
-    # Build direction bars from the connection entries for this location.
-    #
-    # Bars are grouped by (direction_label, fiber_count, fill_color) so that
-    # cables going the same direction with the same fiber count are combined
-    # into one bar rather than creating a bar per cable.
+    # Load connection table data
     # ------------------------------------------------------------------
-    current_conns = conn_dict[loc_key]
-    grouped = {}   # (label, fiber, fill_rgb6) -> count
+    conn_wb    = load_workbook(conn_table_path)
+    conn_sheet = conn_wb["Colored Connections"]
 
-    for fiber, locA, locB, color in current_conns:
-        color = (color or "").upper()
-        if not color:
+    # conn_dict: location -> list of (fiber, locA, locB, fill_hex) per cable
+    # coords:    location -> (latitude, longitude)
+    conn_dict: dict = {}
+    coords:    dict = {}
+
+    for row in conn_sheet.iter_rows(min_row=2):
+        loc = row[0].value
+        if loc is None:
             continue
 
-        # OLT override: if either endpoint is the bare OLT site token, this
-        # cable connects directly to the OLT rack and gets the olive-green bar.
-        if olt_id and (
-            str(locA).upper() == str(olt_id).upper() or
-            str(locB).upper() == str(olt_id).upper()
-        ):
-            label     = "OLT"
-            fill_rgb6 = OLT_BAR_COLOR
-        else:
-            # Classify the directional fill color to a compass label.
-            label = classify_direction_from_color(color)
-            if not label:
-                continue   # unrecognized color; skip this cable
-            fill_rgb6 = color[-6:]
+        lat = row[1].value
+        lon = row[2].value
+        coords[str(loc).strip()] = (lat, lon)
 
-        # Optional: record detailed classification data for the debug CSV.
-        if DEBUG_ENABLED:
-            best_name, best_d, dist_map = palette_distance_report(color)
-            debug_rows.append({
-                "run_id":           run_id,
-                "sheet":            loc_key,
-                "olt_id":           olt_id,
-                "fiber":            fiber,
-                "locA":             str(locA),
-                "locB":             str(locB),
-                "raw_fill":         color.upper(),
-                "olt_override":     "1" if (
-                    olt_id and (
-                        str(locA).upper() == str(olt_id).upper() or
-                        str(locB).upper() == str(olt_id).upper()
-                    )
-                ) else "0",
-                "classified_label": label,
-                "bar_fill":         fill_rgb6,
-                "best_palette":     best_name,
-                "best_dist_sq":     best_d,
-                "dist_North":       dist_map.get("North"),
-                "dist_South":       dist_map.get("South"),
-                "dist_East":        dist_map.get("East"),
-                "dist_West":        dist_map.get("West"),
-                "dist_MST":         dist_map.get("MST"),
-            })
+        connections = []
+        for cell in row[3:]:
+            val = cell.value
+            if not val:
+                continue
+            fiber, locA, locB = parse_connection_value(val)
+            if not fiber:
+                continue
+            fill_color = safe_fill_hex(cell)
+            connections.append((fiber, str(locA), str(locB), (fill_color or "").upper()))
 
-        key           = (label, fiber, fill_rgb6)
-        grouped[key]  = grouped.get(key, 0) + 1
-
-    # Format grouped entries into bar tuples: (label, count, textB, fiber, fill_rgb6)
-    connection_bars = []
-    for (label, fiber, fill_rgb6), n in grouped.items():
-        # textB is the OLT site token for OLT bars; None for directional bars.
-        textB = olt_id if label == "OLT" else None
-        connection_bars.append((label, n, textB, fiber, fill_rgb6))
+        conn_dict[str(loc).strip()] = connections
 
     # ------------------------------------------------------------------
-    # Build splitter and MUX/DEMUX bars by scanning the OPTICAL SPLITTERS
-    # section of the current sheet. One bar is added per unique device type.
+    # Load the colorized cut sheet workbook
     # ------------------------------------------------------------------
-    splitter_bars = []
-    mux_bars      = []
+    wb = load_workbook(input_wb_path)
 
-    found_1x32 = found_1x2 = Found_mux = found_demux = False
+    yellow_fill = PatternFill(start_color=LABEL_FILL, end_color=LABEL_FILL, fill_type="solid")
+    white_fill  = PatternFill(start_color="FFFFFF",   end_color="FFFFFF",   fill_type="solid")
 
-    opt_row = find_row_in_colA(ws, "OPTICAL SPLITTERS")
-    if opt_row:
-        r = opt_row + 1
-        while True:
-            valA = ws.cell(row=r, column=1).value
-            valB = ws.cell(row=r, column=2).value
-            if not valA and not valB:
-                break   # end of the OPTICAL SPLITTERS sub-table
+    thin_side  = Side(border_style="thin",  color="000000")
+    thick_side = Side(border_style="thick", color="000000")
 
-            if isinstance(valB, str):
-                text = valB.upper()
-                # Add one bar per unique device type found in the sub-table.
-                if (not found_1x32) and ("_1X32" in text):
-                    splitter_bars.append(("Splitter", 1, None, "1X32", COLOR_SPLIT_1X32))
-                    found_1x32 = True
-                if (not found_1x2) and ("_1X2" in text):
-                    splitter_bars.append(("Splitter", 1, None, "1X2", COLOR_SPLIT_1X2))
-                    found_1x2 = True
-                if (not found_demux) and ("DEMUX" in text):
-                    subtype = "40CH" if "40CH" in text else "4CH"
-                    mux_bars.append(("DEMUX", 1, None, subtype, COLOR_DEMUX))
-                    found_demux = True
-                if (not Found_mux) and ("MUX" in text):
-                    subtype = "40CH" if "40CH" in text else "4CH"
-                    mux_bars.append(("MUX", 1, None, subtype, COLOR_MUX))
-                    Found_mux = True
-            r += 1
-
-    # Sort connection bars by the defined display order, then by fiber/label.
-    connection_bars.sort(
-        key=lambda b: (BAR_ORDER.get(b[0], 99), str(b[3] or ""), str(b[2] or ""))
-    )
-
-    # Final ordered bars list: direction bars, then splitter bars, then MUX/DEMUX.
-    bars = connection_bars + splitter_bars + mux_bars
-
-    # Record bar output in debug CSV.
-    if DEBUG_ENABLED:
-        for i, (lbl, cnt, textB, fiber_or_kind, fill_hex) in enumerate(bars):
-            debug_rows.append({
-                "run_id":       run_id,
-                "sheet":        loc_key,
-                "record_type":  "bar",
-                "bar_index":    i,
-                "bar_label":    lbl,
-                "bar_count":    cnt,
-                "bar_textB":    textB or "",
-                "bar_fiber":    fiber_or_kind or "",
-                "bar_fill":     fill_hex,
-            })
+    debug_rows = []
+    run_id     = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # ------------------------------------------------------------------
-    # Insert the top section rows into the sheet.
-    #
-    # Layout:
-    #   Row 1     : blank
-    #   Rows 2-7  : metadata block (A:B)
-    #   Row 8     : blank
-    #   Rows 9+   : one bar per direction/type
-    #   Final row : blank
+    # Process each sheet
     # ------------------------------------------------------------------
-    total_new_rows = 1 + 6 + 1 + len(bars) + 1
-    ws.insert_rows(1, total_new_rows)
+    for sheet_name in wb.sheetnames:
+        loc_key = str(sheet_name).strip()
+        if loc_key not in conn_dict:
+            continue
 
-    # Write the metadata label/value pairs into A2:B7.
-    meta_start = 2
-    for i, (lab, val) in enumerate(zip(labels, values)):
-        r  = meta_start + i
-        cA = ws.cell(row=r, column=1)
-        cB = ws.cell(row=r, column=2)
-        cA.value = lab
-        cB.value = val
+        ws = wb[sheet_name]
 
-        # Label column: bold text, white background, left-aligned.
-        cA.font      = Font(name="Calibri", bold=True)
-        cA.alignment = Alignment(horizontal="left")
-        cA.fill      = white_fill
+        sheaths_row = find_row_in_colA(ws, "SHEATHS")
+        if sheaths_row and sheaths_row > 1:
+            ws.delete_rows(1, sheaths_row - 1)
 
-        # Value column: centered, pale-yellow background.
-        cB.alignment = Alignment(horizontal="center")
-        cB.fill      = yellow_fill
+        olt_id = guess_olt_token(loc_key)
 
-    meta_end = meta_start + len(labels) - 1   # last metadata row (row 7)
+        lat_val, lon_val = coords.get(loc_key, (None, None))
+        lat_str = f"{lat_val:.5f}" if isinstance(lat_val, (float, int)) else (lat_val or "")
+        lon_str = f"{lon_val:.5f}" if isinstance(lon_val, (float, int)) else (lon_val or "")
 
-    # Apply a thick outer border with thin interior seam to the metadata block.
-    for r in range(meta_start, meta_end + 1):
-        for c in (1, 2):
-            left   = thick_side if c == 1 else thin_side
-            right  = thick_side if c == 2 else thin_side
-            top    = thick_side if r == meta_start else thin_side
-            bottom = thick_side if r == meta_end   else thin_side
-            # The seam between column A and B should always be thin.
-            if c == 1:
-                right = thin_side
+        labels = ["Splice ID:", "Enclosure:", "No. of Trays:", "Location:", "Latitude:", "Longitude:"]
+        values = [loc_key, "", "", "", lat_str, lon_str]
+
+        current_conns = conn_dict[loc_key]
+        grouped = {}
+
+        for fiber, locA, locB, color in current_conns:
+            color = (color or "").upper()
+            if not color:
+                continue
+
+            if olt_id and (
+                str(locA).upper() == str(olt_id).upper() or
+                str(locB).upper() == str(olt_id).upper()
+            ):
+                label     = "OLT"
+                fill_rgb6 = OLT_BAR_COLOR
             else:
-                left = thin_side
-            ws.cell(row=r, column=c).border = Border(
-                left=left, right=right, top=top, bottom=bottom
+                label = classify_direction_from_color(color)
+                if not label:
+                    continue
+                fill_rgb6 = color[-6:]
+
+            if DEBUG_ENABLED:
+                best_name, best_d, dist_map = palette_distance_report(color)
+                debug_rows.append({
+                    "run_id":           run_id,
+                    "sheet":            loc_key,
+                    "olt_id":           olt_id,
+                    "fiber":            fiber,
+                    "locA":             str(locA),
+                    "locB":             str(locB),
+                    "raw_fill":         color.upper(),
+                    "olt_override":     "1" if (
+                        olt_id and (
+                            str(locA).upper() == str(olt_id).upper() or
+                            str(locB).upper() == str(olt_id).upper()
+                        )
+                    ) else "0",
+                    "classified_label": label,
+                    "bar_fill":         fill_rgb6,
+                    "best_palette":     best_name,
+                    "best_dist_sq":     best_d,
+                    "dist_North":       dist_map.get("North"),
+                    "dist_South":       dist_map.get("South"),
+                    "dist_East":        dist_map.get("East"),
+                    "dist_West":        dist_map.get("West"),
+                    "dist_MST":         dist_map.get("MST"),
+                })
+
+            key          = (label, fiber, fill_rgb6)
+            grouped[key] = grouped.get(key, 0) + 1
+
+        connection_bars = []
+        for (label, fiber, fill_rgb6), n in grouped.items():
+            textB = olt_id if label == "OLT" else None
+            connection_bars.append((label, n, textB, fiber, fill_rgb6))
+
+        splitter_bars = []
+        mux_bars      = []
+        found_1x32 = found_1x2 = Found_mux = found_demux = False
+
+        opt_row = find_row_in_colA(ws, "OPTICAL SPLITTERS")
+        if opt_row:
+            r = opt_row + 1
+            while True:
+                valA = ws.cell(row=r, column=1).value
+                valB = ws.cell(row=r, column=2).value
+                if not valA and not valB:
+                    break
+                if isinstance(valB, str):
+                    text = valB.upper()
+                    if (not found_1x32) and ("_1X32" in text):
+                        splitter_bars.append(("Splitter", 1, None, "1X32", COLOR_SPLIT_1X32))
+                        found_1x32 = True
+                    if (not found_1x2) and ("_1X2" in text):
+                        splitter_bars.append(("Splitter", 1, None, "1X2", COLOR_SPLIT_1X2))
+                        found_1x2 = True
+                    if (not found_demux) and ("DEMUX" in text):
+                        subtype = "40CH" if "40CH" in text else "4CH"
+                        mux_bars.append(("DEMUX", 1, None, subtype, COLOR_DEMUX))
+                        found_demux = True
+                    if (not Found_mux) and ("MUX" in text):
+                        subtype = "40CH" if "40CH" in text else "4CH"
+                        mux_bars.append(("MUX", 1, None, subtype, COLOR_MUX))
+                        Found_mux = True
+                r += 1
+
+        connection_bars.sort(
+            key=lambda b: (BAR_ORDER.get(b[0], 99), str(b[3] or ""), str(b[2] or ""))
+        )
+        bars = connection_bars + splitter_bars + mux_bars
+
+        if DEBUG_ENABLED:
+            for i, (lbl, cnt, textB, fiber_or_kind, fill_hex) in enumerate(bars):
+                debug_rows.append({
+                    "run_id":       run_id,
+                    "sheet":        loc_key,
+                    "record_type":  "bar",
+                    "bar_index":    i,
+                    "bar_label":    lbl,
+                    "bar_count":    cnt,
+                    "bar_textB":    textB or "",
+                    "bar_fiber":    fiber_or_kind or "",
+                    "bar_fill":     fill_hex,
+                })
+
+        total_new_rows = 1 + 6 + 1 + len(bars) + 1
+        ws.insert_rows(1, total_new_rows)
+
+        meta_start = 2
+        for i, (lab, val) in enumerate(zip(labels, values)):
+            r  = meta_start + i
+            cA = ws.cell(row=r, column=1)
+            cB = ws.cell(row=r, column=2)
+            cA.value = lab
+            cB.value = val
+            cA.font      = Font(name="Calibri", bold=True)
+            cA.alignment = Alignment(horizontal="left")
+            cA.fill      = white_fill
+            cB.alignment = Alignment(horizontal="center")
+            cB.fill      = yellow_fill
+
+        meta_end = meta_start + len(labels) - 1
+
+        for r in range(meta_start, meta_end + 1):
+            for c in (1, 2):
+                left   = thick_side if c == 1 else thin_side
+                right  = thick_side if c == 2 else thin_side
+                top    = thick_side if r == meta_start else thin_side
+                bottom = thick_side if r == meta_end   else thin_side
+                if c == 1:
+                    right = thin_side
+                else:
+                    left = thin_side
+                ws.cell(row=r, column=c).border = Border(
+                    left=left, right=right, top=top, bottom=bottom
+                )
+
+        start_bar_row = meta_end + 2
+
+        def set_bar_cell(cell, fill_hex, value=None) -> None:
+            cell.value     = value
+            cell.fill      = PatternFill(
+                start_color=to_argb(fill_hex),
+                end_color=to_argb(fill_hex),
+                fill_type="solid",
             )
+            cell.font      = Font(name="Calibri", bold=True, color="FFFFFF")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    start_bar_row = meta_end + 2   # bars begin at row 9
+        for offset, (label, count, textB, fiber_or_kind, fill_hex) in enumerate(bars):
+            textA = (
+                f"{label} ({count})"
+                if count > 1 and label not in ("OLT",)
+                else label
+            )
+            textD = fiber_or_kind
+            r     = start_bar_row + offset
+            for c in range(1, 6):
+                val = None
+                if c == 1:
+                    val = textA
+                elif c == 2 and textB:
+                    val = textB
+                elif c == 4 and textD:
+                    val = textD
+                set_bar_cell(ws.cell(row=r, column=c), fill_hex, val)
 
-    def set_bar_cell(cell, fill_hex, value=None) -> None:
-        """
-        Apply the bar style to a single cell: solid fill, bold white text,
-        centered alignment.
-        """
-        cell.value     = value
-        cell.fill      = PatternFill(
-            start_color=to_argb(fill_hex),
-            end_color=to_argb(fill_hex),
-            fill_type="solid",
-        )
-        cell.font      = Font(name="Calibri", bold=True, color="FFFFFF")
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    # ------------------------------------------------------------------
+    # Save output workbook
+    # ------------------------------------------------------------------
+    wb.save(output_wb_path)
 
-    # Write each bar across columns A-E.
-    for offset, (label, count, textB, fiber_or_kind, fill_hex) in enumerate(bars):
-        # Column A: label with count when more than one cable (e.g. "North (2)").
-        # OLT bars show just "OLT" without a count.
-        textA = (
-            f"{label} ({count})"
-            if count > 1 and label not in ("OLT",)
-            else label
-        )
-        textD = fiber_or_kind   # fiber count or device subtype in column D
-        r     = start_bar_row + offset
+    # ------------------------------------------------------------------
+    # Write debug CSV
+    # ------------------------------------------------------------------
+    if DEBUG_ENABLED:
+        try:
+            os.makedirs(os.path.dirname(debug_dump_path), exist_ok=True)
+            fieldnames = [
+                "run_id", "record_type", "sheet", "olt_id", "fiber", "locA", "locB",
+                "raw_fill", "olt_override", "classified_label", "bar_fill",
+                "best_palette", "best_dist_sq",
+                "dist_North", "dist_South", "dist_East", "dist_West", "dist_MST",
+                "bar_index", "bar_label", "bar_count", "bar_textB", "bar_fiber",
+            ]
+            with open(debug_dump_path, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=fieldnames)
+                w.writeheader()
+                for row in debug_rows:
+                    if "record_type" not in row:
+                        row["record_type"] = "conn"
+                    w.writerow(row)
+            print(f"Debug dump: {debug_dump_path}")
+        except Exception as e:
+            print(f"Debug dump failed: {e}")
 
-        # Fill columns A through E with the bar color and labels.
-        for c in range(1, 6):
-            val = None
-            if c == 1:
-                val = textA          # direction/type label
-            elif c == 2 and textB:
-                val = textB          # OLT site token (OLT bars only)
-            elif c == 4 and textD:
-                val = textD          # fiber count or device subtype
-            set_bar_cell(ws.cell(row=r, column=c), fill_hex, val)
+    print(f"Wrote: {output_wb_path}")
 
 
-# ---------------------------------------------------------------------------
-# Save output workbook
-# ---------------------------------------------------------------------------
-
-wb.save(OUTPUT_WB_PATH)
-
-# ---------------------------------------------------------------------------
-# Write debug CSV (classification audit trail)
-# ---------------------------------------------------------------------------
-
-if DEBUG_ENABLED:
-    try:
-        os.makedirs(os.path.dirname(DEBUG_DUMP_PATH), exist_ok=True)
-        fieldnames = [
-            "run_id", "record_type", "sheet", "olt_id", "fiber", "locA", "locB",
-            "raw_fill", "olt_override", "classified_label", "bar_fill",
-            "best_palette", "best_dist_sq",
-            "dist_North", "dist_South", "dist_East", "dist_West", "dist_MST",
-            "bar_index", "bar_label", "bar_count", "bar_textB", "bar_fiber",
-        ]
-        with open(DEBUG_DUMP_PATH, "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=fieldnames)
-            w.writeheader()
-            for row in debug_rows:
-                # Tag connection-classification rows (vs. bar output rows).
-                if "record_type" not in row:
-                    row["record_type"] = "conn"
-                w.writerow(row)
-        print(f"Debug dump: {DEBUG_DUMP_PATH}")
-    except Exception as e:
-        print(f"Debug dump failed: {e}")
-
-print(f"Wrote: {OUTPUT_WB_PATH}")
+if __name__ == "__main__":
+    main()

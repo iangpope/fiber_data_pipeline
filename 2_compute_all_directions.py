@@ -52,19 +52,14 @@ FIBER_SUFFIX_RX     = re.compile(r"_(\d{2,3}CT)\b", flags=re.IGNORECASE)
 # ---------------------------------------------------------------------------
 # File paths
 # ---------------------------------------------------------------------------
-DATA_DIR         = "data"
-CONNECTIONS_PATH = os.path.join(DATA_DIR, "Connections_Table.xlsx")
-OUTPUT_PATH      = "output/Colored_Connections_Table.xlsx"
 
 
-def detect_kmz_file() -> str:
+def detect_kmz_file(data_dir: str = "data") -> str:
     """Return the path to the one KMZ file in the data folder, or raise."""
-    for f in os.listdir(DATA_DIR):
+    for f in os.listdir(data_dir):
         if f.lower().endswith(".kmz"):
-            return os.path.join(DATA_DIR, f)
-    raise FileNotFoundError("No .kmz file found in 'data' folder.")
-
-KMZ_PATH = detect_kmz_file()
+            return os.path.join(data_dir, f)
+    raise FileNotFoundError(f"No .kmz file found in '{data_dir}' folder.")
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +116,7 @@ def is_olt_cable(cable_name: str, olt_token: str) -> bool:
 # KMZ parsing: extract all fiber cable line segments
 # ---------------------------------------------------------------------------
 
-def extract_fiber_segments() -> list:
+def extract_fiber_segments(kmz_path: str) -> list:
     """
     Parse the KMZ and return a list of (cable_name, [(lat, lon), ...]) tuples.
 
@@ -137,7 +132,7 @@ def extract_fiber_segments() -> list:
         """Remove the XML namespace prefix from a tag string."""
         return tag.split("}")[-1] if "}" in tag else tag
 
-    with zipfile.ZipFile(KMZ_PATH, "r") as zf:
+    with zipfile.ZipFile(kmz_path, "r") as zf:
         kml_file = next((f for f in zf.namelist() if f.endswith(".kml")), None)
         root = ET.fromstring(zf.read(kml_file))
 
@@ -308,7 +303,8 @@ def is_diagonal_bearing(b: float) -> bool:
     )
 
 
-def generate_colored_table(named_edges: list, location_coords: dict) -> None:
+def generate_colored_table(named_edges: list, location_coords: dict,
+                           connections_path: str, output_path: str) -> None:
     """
     Build the Colored Connections Table Excel file.
 
@@ -324,7 +320,7 @@ def generate_colored_table(named_edges: list, location_coords: dict) -> None:
       - Within one location, each directional color may only appear once;
         a fallback to the next-nearest color is used if a direction repeats.
     """
-    df_main = pd.read_excel(CONNECTIONS_PATH)
+    df_main = pd.read_excel(connections_path)
     wb = Workbook()
     ws = wb.active
     ws.title = "Colored Connections"
@@ -590,21 +586,39 @@ def generate_colored_table(named_edges: list, location_coords: dict) -> None:
 
     print("=== END DEBUG LOG ===\n")
 
-    wb.save(OUTPUT_PATH)
-    print(f"Colored table saved to {OUTPUT_PATH}")
+    wb.save(output_path)
+    print(f"Colored table saved to {output_path}")
 
 
 # ---------------------------------------------------------------------------
-# Entry point
+# Main entry point
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+def main(data_dir: str = "data", output_dir: str = "output") -> None:
+    """
+    Run step 2: compute cable bearing directions and write the Colored
+    Connections Table.
+
+    Parameters
+    ----------
+    data_dir : str
+        Directory containing Connections_Table.xlsx and the KMZ file.
+    output_dir : str
+        Directory for the Colored_Connections_Table.xlsx output.
+    """
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+
+    connections_path = os.path.join(data_dir,   "Connections_Table.xlsx")
+    output_path      = os.path.join(output_dir, "Colored_Connections_Table.xlsx")
+    kmz_path         = detect_kmz_file(data_dir)
+
     # Extract and merge KMZ cable geometry.
-    fiber_segments = extract_fiber_segments()
+    fiber_segments = extract_fiber_segments(kmz_path)
     fiber_segments = merge_named_segments(fiber_segments)
 
     # Build location coordinate lookup from the Connections Table.
-    df_conn = pd.read_excel(CONNECTIONS_PATH)
+    df_conn = pd.read_excel(connections_path)
     location_coords = {}
     for _, row in df_conn.iterrows():
         try:
@@ -614,6 +628,11 @@ if __name__ == "__main__":
             if name and not pd.isna(lat) and not pd.isna(lon):
                 location_coords[name] = (lat, lon)
         except Exception:
-            continue   # skip any malformed rows silently
+            continue
 
-    generate_colored_table(fiber_segments, location_coords)
+    generate_colored_table(fiber_segments, location_coords,
+                           connections_path, output_path)
+
+
+if __name__ == "__main__":
+    main()
