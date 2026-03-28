@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Complete — Fiber Pipeline</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="page-wrap">
+
+    <header class="site-header">
+      <div class="header-inner">
+        <span class="logo">🔦</span>
+        <div>
+          <h1>Pipeline Complete</h1>
+          <p class="subtitle">
+            {% if status == "complete" %}All steps finished successfully
+            {% elif status == "stopped_at_checkpoint" %}Stopped at checkpoint — steps 3–10 were not run
+            {% else %}Finished with status: {{ status }}
+            {% endif %}
+          </p>
+        </div>
+      </div>
+    </header>
+
+    <main class="complete-card">
+
+      <div class="complete-icon">
+        {% if status == "complete" %}✅{% elif status == "stopped_at_checkpoint" %}🛑{% else %}⚠️{% endif %}
+      </div>
+
+      <h2>
+        {% if status == "complete" %}Workbook Ready for Download
+        {% elif status == "stopped_at_checkpoint" %}Stopped at Checkpoint
+        {% else %}Run Ended — {{ status }}
+        {% endif %}
+      </h2>
+
+      {% if outputs %}
+      <div class="output-list">
+        {% for fname in outputs %}
+        <a href="/download/{{ job_id }}/{{ fname }}" class="output-btn">
+          ⬇ {{ fname }}
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="muted-text">No output files were generated.</p>
+      {% endif %}
+
+      <div class="complete-actions">
+        <a href="/" class="btn-secondary">← Run Another Job</a>
+        {% if status == "complete" %}
+        <a href="http://localhost:5001" class="btn-secondary" target="_blank">Open Cable Resize Tool ↗</a>
+        {% endif %}
+      </div>
+
+    </main>
+
+  </div>
+</body>
+</html>

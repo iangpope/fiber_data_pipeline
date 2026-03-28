@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkpoint Review — Fiber Pipeline</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="page-wrap">
+
+    <header class="site-header">
+      <div class="header-inner">
+        <span class="logo">🔦</span>
+        <div>
+          <h1>Checkpoint Review</h1>
+          <p class="subtitle">Steps 1–2 complete — verify direction colors before continuing</p>
+        </div>
+      </div>
+    </header>
+
+    <main class="checkpoint-card">
+
+      <div class="checkpoint-icon">⚠️</div>
+      <h2>Review Required</h2>
+      <p class="checkpoint-desc">
+        Steps 1 and 2 have finished. The <strong>Colored Connections Table</strong> has been
+        generated. Please download it and verify that each cable has the correct
+        directional color before running the remaining steps (3–10).
+      </p>
+
+      <div class="color-key">
+        <div class="color-row"><span class="swatch" style="background:#FFA500"></span><span>North</span></div>
+        <div class="color-row"><span class="swatch" style="background:#008000"></span><span>East</span></div>
+        <div class="color-row"><span class="swatch" style="background:#8B4513"></span><span>South</span></div>
+        <div class="color-row"><span class="swatch" style="background:#708090"></span><span>West</span></div>
+        <div class="color-row"><span class="swatch" style="background:#C5D9B5"></span><span>OLT</span></div>
+        <div class="color-row"><span class="swatch" style="background:#FF0000"></span><span>MST</span></div>
+      </div>
+
+      {% if has_conn_table %}
+      <a href="/download/{{ job_id }}/connections" class="btn-download">
+        ⬇ Download Colored Connections Table
+      </a>
+      {% else %}
+      <p class="warn-text">⚠ Connections table file not found — check that step 2 completed successfully.</p>
+      {% endif %}
+
+      <div class="checkpoint-actions">
+        <form method="POST" action="/checkpoint/{{ job_id }}/stop">
+          <button type="submit" class="btn-secondary">✕ Stop Here</button>
+        </form>
+        <form method="POST" action="/checkpoint/{{ job_id }}/continue">
+          <button type="submit" class="btn-primary">▶ Continue — Run Steps 3–10</button>
+        </form>
+      </div>
+
+    </main>
+
+  </div>
+</body>
+</html>

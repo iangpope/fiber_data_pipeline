@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fiber Pipeline — Generate Workbook</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="page-wrap">
+
+    <header class="site-header">
+      <div class="header-inner">
+        <span class="logo">🔦</span>
+        <div>
+          <h1>Fiber Pipeline</h1>
+          <p class="subtitle">FTTH Splice Workbook &amp; Tap Report Generator</p>
+        </div>
+        <nav class="header-nav">
+          <a href="http://localhost:5001" class="nav-link" target="_blank">Cable Resize Tool ↗</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="flash-errors">
+            {% for msg in messages %}
+              <p class="flash-msg">⚠ {{ msg }}</p>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      <form method="POST" action="/run" enctype="multipart/form-data" id="uploadForm">
+
+        <div class="upload-section">
+          <h2>Required Files</h2>
+          <p class="hint">Both files are required to run the pipeline.</p>
+          <div class="upload-grid">
+
+            <!-- KMZ drop zone -->
+            <div class="upload-card">
+              <label class="drop-zone" id="kmzZone">
+                <input type="file" name="kmz" id="kmzInput" accept=".kmz" required hidden />
+                <div class="drop-inner" id="kmzInner">
+                  <span class="drop-icon">🗺️</span>
+                  <span class="drop-label">KMZ Network Export</span>
+                  <span class="drop-hint">Click or drag & drop — .kmz</span>
+                </div>
+              </label>
+            </div>
+
+            <!-- Cut sheet drop zone -->
+            <div class="upload-card">
+              <label class="drop-zone" id="sheetZone">
+                <input type="file" name="cutsheet" id="sheetInput" accept=".xlsx" required hidden />
+                <div class="drop-inner" id="sheetInner">
+                  <span class="drop-icon">📊</span>
+                  <span class="drop-label">Splice Cut Sheet</span>
+                  <span class="drop-hint">Click or drag & drop — .xlsx (SPLICE REPORTS)</span>
+                </div>
+              </label>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="upload-section secondary">
+          <h2>Optional Files <span class="badge">Step 10</span></h2>
+          <p class="hint">Required to generate the Tap Report. If omitted, pipeline runs steps 1–9 only.</p>
+          <div class="upload-grid">
+
+            <div class="upload-card">
+              <label class="drop-zone optional" id="hafZone">
+                <input type="file" name="haf" id="hafInput" accept=".xlsx" hidden />
+                <div class="drop-inner" id="hafInner">
+                  <span class="drop-icon">📋</span>
+                  <span class="drop-label">HAF Report</span>
+                  <span class="drop-hint">Click or drag & drop — .xlsx (optional)</span>
+                </div>
+              </label>
+            </div>
+
+            <div class="upload-card">
+              <label class="drop-zone optional" id="templateZone">
+                <input type="file" name="tap_template" id="templateInput" accept=".xlsx" hidden />
+                <div class="drop-inner" id="templateInner">
+                  <span class="drop-icon">📄</span>
+                  <span class="drop-label">Tap Report Template</span>
+                  <span class="drop-hint">Click or drag & drop — .xlsx (optional)</span>
+                </div>
+              </label>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="action-bar standalone">
+          <div class="start-info">
+            <span id="readyIndicator" class="ready-dot not-ready"></span>
+            <span id="readyLabel">Upload KMZ and Cut Sheet to continue</span>
+          </div>
+          <button type="submit" class="btn-primary" id="startBtn" disabled>
+            ▶ Run Pipeline
+          </button>
+        </div>
+
+      </form>
+
+      <div class="pipeline-steps">
+        <h3>Pipeline Steps</h3>
+        <div class="steps-grid">
+          <div class="step-card"><span class="step-num">1</span><span>Extract KMZ coords</span></div>
+          <div class="step-card"><span class="step-num">2</span><span>Compute directions</span></div>
+          <div class="step-card step-checkpoint"><span class="step-num">✦</span><span>Checkpoint review</span></div>
+          <div class="step-card"><span class="step-num">3</span><span>Colorize cut sheet</span></div>
+          <div class="step-card"><span class="step-num">4</span><span>Format top section</span></div>
+          <div class="step-card"><span class="step-num">5</span><span>Normalize connections</span></div>
+          <div class="step-card"><span class="step-num">6</span><span>Assign addresses</span></div>
+          <div class="step-card"><span class="step-num">7</span><span>Process taps</span></div>
+          <div class="step-card"><span class="step-num">8</span><span>Finalize workbook</span></div>
+          <div class="step-card"><span class="step-num">9</span><span>Path of Light trace</span></div>
+          <div class="step-card"><span class="step-num">10</span><span>Generate Tap Report</span></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    function setupDrop(zoneId, innerId, inputId, icon, label, optional) {
+      const zone  = document.getElementById(zoneId);
+      const inner = document.getElementById(innerId);
+      const inp   = document.getElementById(inputId);
+
+      function updateLabel(name) {
+        inner.innerHTML = `
+          <span class="drop-icon">${optional ? "✅" : "✅"}</span>
+          <span class="drop-label">${name}</span>
+          <span class="drop-hint">Ready</span>`;
+        zone.classList.add("has-file");
+        checkReady();
+      }
+
+      inp.addEventListener("change", () => { if (inp.files.length) updateLabel(inp.files[0].name); });
+      zone.addEventListener("dragover",  e => { e.preventDefault(); zone.classList.add("drag-over"); });
+      zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
+      zone.addEventListener("drop", e => {
+        e.preventDefault(); zone.classList.remove("drag-over");
+        const file = e.dataTransfer.files[0];
+        if (file) { const dt = new DataTransfer(); dt.items.add(file); inp.files = dt.files; updateLabel(file.name); }
+      });
+    }
+
+    setupDrop("kmzZone",      "kmzInner",      "kmzInput",      "🗺️", "KMZ Network Export",      false);
+    setupDrop("sheetZone",    "sheetInner",    "sheetInput",    "📊", "Splice Cut Sheet",         false);
+    setupDrop("hafZone",      "hafInner",      "hafInput",      "📋", "HAF Report",               true);
+    setupDrop("templateZone", "templateInner", "templateInput", "📄", "Tap Report Template",      true);
+
+    function checkReady() {
+      const kmzOk   = document.getElementById("kmzInput").files.length > 0;
+      const sheetOk = document.getElementById("sheetInput").files.length > 0;
+      const btn     = document.getElementById("startBtn");
+      const dot     = document.getElementById("readyIndicator");
+      const lbl     = document.getElementById("readyLabel");
+      if (kmzOk && sheetOk) {
+        btn.disabled = false;
+        dot.className = "ready-dot ready";
+        lbl.textContent = "Ready to run pipeline";
+      } else {
+        btn.disabled = true;
+        dot.className = "ready-dot not-ready";
+        lbl.textContent = "Upload KMZ and Cut Sheet to continue";
+      }
+    }
+
+    document.getElementById("uploadForm").addEventListener("submit", () => {
+      document.getElementById("startBtn").textContent = "Starting...";
+      document.getElementById("startBtn").disabled = true;
+    });
+  </script>
+</body>
+</html>

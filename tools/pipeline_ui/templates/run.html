@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Running Pipeline — Fiber Pipeline</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="page-wrap">
+
+    <header class="site-header">
+      <div class="header-inner">
+        <span class="logo">🔦</span>
+        <div>
+          <h1>Running Pipeline</h1>
+          <p class="subtitle" id="statusLabel">Initializing…</p>
+        </div>
+      </div>
+    </header>
+
+    <!-- Step progress bar -->
+    <div class="progress-section">
+      <div class="step-bar" id="stepBar">
+        {% for i in range(1, 11) %}
+        <div class="step-pip" id="pip-{{ i }}" title="Step {{ i }}">{{ i }}</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Live log -->
+    <div class="log-card">
+      <div class="log-header">
+        <span>Live Output</span>
+        <span class="log-badge" id="logBadge">Running</span>
+      </div>
+      <div class="log-body" id="logBody"></div>
+    </div>
+
+  </div>
+
+  <script src="{{ url_for('static', filename='run.js') }}"></script>
+  <script>
+    startStream("{{ job_id }}");
+  </script>
+</body>
+</html>
