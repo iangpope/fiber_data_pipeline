@@ -21,6 +21,7 @@ import threading
 import uuid
 from pathlib import Path
 
+import re
 import openpyxl
 from openpyxl.styles import PatternFill
 from flask import (
@@ -38,6 +39,17 @@ if str(_ROOT) not in sys.path:
 
 import pipeline_runner
 from map_builder import build_geojson
+
+
+def _rename_cable_size(cable: str, new_size: str) -> str:
+    """Return the cable name with its CT suffix replaced by new_size."""
+    m = re.search(r'_(\d{2,3}CT)$', cable, re.IGNORECASE)
+    if m:
+        return cable[:m.start()] + '_' + new_size.upper()
+    m = re.match(r'^(\d{2,3}CT)(\s)', cable, re.IGNORECASE)
+    if m:
+        return new_size.upper() + cable[m.end(1):]
+    return cable
 
 
 
@@ -294,6 +306,46 @@ def create_app() -> Flask:
 
         return jsonify({"ok": True, "changed": changed,
                         "color": css_color, "direction": _DIR_LABELS[direction]})
+
+    # -----------------------------------------------------------------------
+    # Cable size rename — updates CT suffix in both xlsx tables
+    # -----------------------------------------------------------------------
+    @app.route("/resize/<job_id>", methods=["POST"])
+    def resize_cable(job_id):
+        if job_id not in _JOBS:
+            return jsonify({"ok": False, "error": "Job not found"}), 404
+        data     = request.get_json(force=True) or {}
+        cable    = str(data.get("cable", "")).strip()
+        new_size = str(data.get("size",  "")).strip().upper()
+        if not cable or not re.match(r'^\d{2,3}CT$', new_size):
+            return jsonify({"ok": False, "error": "Invalid cable or size"}), 400
+
+        new_cable = _rename_cable_size(cable, new_size)
+        if new_cable == cable:
+            return jsonify({"ok": True, "old_cable": cable, "new_cable": cable, "changed": 0})
+
+        job_dir = Path(_JOBS[job_id]["job_dir"])
+        changed_total = 0
+        for fpath in [
+            job_dir / "data"   / "Connections_Table.xlsx",
+            job_dir / "output" / "Colored_Connections_Table.xlsx",
+        ]:
+            if not fpath.exists():
+                continue
+            wb = openpyxl.load_workbook(str(fpath))
+            changed = 0
+            for ws in wb.worksheets:
+                for row in ws.iter_rows():
+                    for cell in row:
+                        if str(cell.value or "").strip() == cable:
+                            cell.value = new_cable
+                            changed += 1
+            if changed:
+                wb.save(str(fpath))
+                changed_total += changed
+
+        return jsonify({"ok": True, "old_cable": cable, "new_cable": new_cable,
+                        "changed": changed_total})
 
     # -----------------------------------------------------------------------
     # Completion page

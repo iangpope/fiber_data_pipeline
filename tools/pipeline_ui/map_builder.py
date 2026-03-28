@@ -8,18 +8,16 @@ Combines:
   3. data/<project>.kmz                 -- cable line geometries
 
 Outputs a single GeoJSON FeatureCollection with:
-  - One LineString feature per cable (colored by direction)
-  - One Point feature per location (markers, with popup data)
+  - One MultiLineString feature per cable (all segments, neutral color)
+  - One Point feature per location (markers, with per-location cable colors)
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import zipfile
-
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from typing import Optional
@@ -54,6 +52,28 @@ _FILL_TO_INFO: dict[str, dict] = {
 _DEFAULT_COLOR = {"label": "Unknown", "css": "#888888"}
 
 
+def _cable_short_name(cable_name: str, loc_name: str) -> str:
+    """Return compact 'other-end (size)' label for this cable at this location."""
+    if '_TO_' in cable_name:
+        end_a, rest = cable_name.split('_TO_', 1)
+        m = re.search(r'_(\d{2,3}CT)$', rest, re.IGNORECASE)
+        size  = m.group(1) if m else ''
+        end_b = rest[:m.start()] if m else rest
+        other = end_b if end_a == loc_name else end_a
+        return f"{other} ({size})" if size else other
+    m = re.match(r'^(\d{2,3}CT)\s+(\S+)\s+TO\s+(\S+)$', cable_name, re.IGNORECASE)
+    if m:
+        size, ea, eb = m.group(1), m.group(2), m.group(3)
+        return f"{eb if ea == loc_name else ea} ({size})"
+    return cable_name
+
+
+def _cable_size(cable_name: str) -> str:
+    """Extract the fiber-count suffix from a cable name (e.g. '48CT')."""
+    m = re.search(r'(\d{2,3}CT)', cable_name, re.IGNORECASE)
+    return m.group(1).upper() if m else ''
+
+
 def _hex_from_fill(cell) -> Optional[str]:
     """Extract the 6-char hex color from an openpyxl cell's PatternFill."""
     try:
@@ -67,48 +87,85 @@ def _hex_from_fill(cell) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# KMZ line geometry parser
+# KMZ cable geometry parser — folder-based
+#
+# Magellan KMZ exports organise fiber cables as:
+#   fiber/fiberCable/<GUID folder name = cable name>/<Placemark LineStrings>
+#
+# A single cable can be split across many Placemarks (e.g. 24 segments for
+# one cable).  We collect ALL segments per cable so the map renders the
+# complete route rather than one fragment.
 # ---------------------------------------------------------------------------
 
-def _parse_kmz_lines(kmz_path: str) -> dict[str, list[tuple[float, float]]]:
+def _strip_ns(tag: str) -> str:
+    return tag.split("}")[-1] if "}" in tag else tag
+
+
+def _get_name(el) -> str:
+    n = next((c for c in el if _strip_ns(c.tag) == "name"), None)
+    return (n.text or "").strip() if n is not None else ""
+
+
+def _parse_kmz_cables(kmz_path: str) -> dict[str, list[list[tuple[float, float]]]]:
     """
-    Return {cable_name: [(lat, lon), ...]} for every LineString Placemark
-    in the KMZ file.
+    Return {cable_name: [[seg1_points], [seg2_points], ...]} by walking the
+    fiber/fiberCable folder hierarchy in the KMZ.
+
+    Each inner list is one LineString segment expressed as (lat, lon) tuples.
+    Keeping segments separate (rather than concatenating) avoids drawing
+    spurious connecting lines when segments are not geographically ordered.
     """
-    name_to_coords: dict[str, list] = {}
+    cable_segments: dict[str, list] = {}
 
     with zipfile.ZipFile(kmz_path, "r") as kmz:
         kml_name = next((n for n in kmz.namelist() if n.endswith(".kml")), None)
         if not kml_name:
-            return name_to_coords
+            return cable_segments
         root = ET.fromstring(kmz.read(kml_name))
 
-    ns = {"kml": "http://www.opengis.net/kml/2.2"}
+    # Locate the fiber/fiberCable folder (works regardless of KML namespace).
+    fiber_cable_folder = None
+    for folder in root.iter():
+        if _strip_ns(folder.tag) == "Folder" and _get_name(folder) == "fiberCable":
+            fiber_cable_folder = folder
+            break
 
-    for pm in root.findall(".//kml:Placemark", ns):
-        name_el  = pm.find("kml:name", ns)
-        coords_el = pm.find(".//kml:LineString/kml:coordinates", ns)
-        if name_el is None or coords_el is None:
+    if fiber_cable_folder is None:
+        return cable_segments
+
+    # Each direct child Folder has the cable name; its Placemarks hold geometry.
+    for guid_folder in fiber_cable_folder:
+        if _strip_ns(guid_folder.tag) != "Folder":
+            continue
+        cable_name = _get_name(guid_folder)
+        if not cable_name:
             continue
 
-        cable = (name_el.text or "").strip()
-        if not cable:
-            continue
+        segments = []
+        for pm in guid_folder:
+            if _strip_ns(pm.tag) != "Placemark":
+                continue
+            ls = next((c for c in pm.iter() if _strip_ns(c.tag) == "LineString"), None)
+            if ls is None:
+                continue
+            coords_el = next((c for c in ls.iter() if _strip_ns(c.tag) == "coordinates"), None)
+            if coords_el is None or not coords_el.text:
+                continue
+            points = []
+            for tok in coords_el.text.split():
+                parts = tok.split(",")
+                if len(parts) >= 2:
+                    try:
+                        points.append((float(parts[1]), float(parts[0])))  # lat, lon
+                    except ValueError:
+                        pass
+            if points:
+                segments.append(points)
 
-        points = []
-        for tok in (coords_el.text or "").split():
-            parts = tok.split(",")
-            if len(parts) >= 2:
-                try:
-                    lon, lat = float(parts[0]), float(parts[1])
-                    points.append((lat, lon))
-                except ValueError:
-                    pass
+        if segments:
+            cable_segments[cable_name] = segments
 
-        if points:
-            name_to_coords[cable] = points
-
-    return name_to_coords
+    return cable_segments
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +201,7 @@ def build_geojson(job_dir: str) -> dict:
         None,
     )
 
-    # Load direction confidence data written by step 2 (absent on first run or CLI-only runs).
+    # Load direction confidence data written by step 2 (absent on CLI-only runs).
     cable_confidence: dict[str, dict] = {}
     conf_summary: dict = {}
     _conf_path = output_dir / "direction_confidence.json"
@@ -156,15 +213,12 @@ def build_geojson(job_dir: str) -> dict:
 
     # -----------------------------------------------------------------------
     # 1. Read cable → color from the Colored Connections Table.
-    #    Each cable name is in a cell; its background fill is the direction color.
     # -----------------------------------------------------------------------
     cable_info: dict[str, dict] = {}   # cable_name → {label, css}
 
     wb_colored = openpyxl.load_workbook(colored_table_path)
     ws = wb_colored.active
 
-    # Header row: Location, Latitude, Longitude, Connection 1, Connection 2, ...
-    # Data starts at row 2.
     max_col = ws.max_column
     for row in ws.iter_rows(min_row=2, max_col=max_col):
         for cell in row[3:]:   # skip Location, Lat, Lon columns
@@ -197,39 +251,50 @@ def build_geojson(job_dir: str) -> dict:
                 val = str(row.get(col, "")).strip()
                 if val and val.lower() not in ("nan", "none", ""):
                     info = cable_info.get(val, _DEFAULT_COLOR)
-                    cables.append({"name": val, "color": info["css"], "label": info["label"]})
+                    cables.append({
+                        "name":       val,
+                        "color":      info["css"],
+                        "label":      info["label"],
+                        "short_name": _cable_short_name(val, loc),
+                        "size":       _cable_size(val),
+                    })
 
         location_data[loc] = {"lat": lat, "lon": lon, "cables": cables}
 
     # -----------------------------------------------------------------------
-    # 3. Parse KMZ line geometries.
+    # 3. Parse KMZ cable geometries (all segments per cable).
     # -----------------------------------------------------------------------
-    kmz_lines = _parse_kmz_lines(kmz_path) if kmz_path else {}
+    kmz_cables = _parse_kmz_cables(kmz_path) if kmz_path else {}
 
     # -----------------------------------------------------------------------
     # 4. Build GeoJSON features.
     # -----------------------------------------------------------------------
     features = []
 
-    # --- Cable line features ---
+    # --- Cable MultiLineString features ---
+    # Color is stored in properties for node-click highlighting and override
+    # tracking, but lines are drawn neutral on the map until a node is clicked.
     seen_cables: set[str] = set()
     for cable, info in cable_info.items():
         if cable in seen_cables:
             continue
         seen_cables.add(cable)
 
-        coords_latlon = kmz_lines.get(cable)
-        if not coords_latlon:
+        segments = kmz_cables.get(cable)
+        if not segments:
             continue
 
         # GeoJSON coordinates are [lon, lat]
-        coords_geojson = [[lon, lat] for lat, lon in coords_latlon]
+        coords_geojson = [
+            [[lon, lat] for lat, lon in seg]
+            for seg in segments
+        ]
 
         _conf = cable_confidence.get(cable, {})
         features.append({
             "type": "Feature",
             "geometry": {
-                "type": "LineString",
+                "type":        "MultiLineString",
                 "coordinates": coords_geojson,
             },
             "properties": {
@@ -238,7 +303,6 @@ def build_geojson(job_dir: str) -> dict:
                 "direction":  info["label"],
                 "bearing":    _conf.get("bearing"),
                 "confidence": _conf.get("confidence", "ok"),
-                "weight":     3,
             },
         })
 
@@ -250,7 +314,7 @@ def build_geojson(job_dir: str) -> dict:
         features.append({
             "type": "Feature",
             "geometry": {
-                "type": "Point",
+                "type":        "Point",
                 "coordinates": [data["lon"], data["lat"]],
             },
             "properties": {

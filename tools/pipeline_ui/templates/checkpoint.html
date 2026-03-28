@@ -14,7 +14,7 @@
     /* ── Map layout ─────────────────────────────────────── */
     .checkpoint-layout {
       display: grid;
-      grid-template-columns: 1fr 320px;
+      grid-template-columns: 1fr 360px;
       grid-template-rows: auto 1fr auto;
       gap: 1rem;
       height: calc(100vh - 130px);
@@ -177,8 +177,62 @@
     .dir-btn:hover   { background: rgba(255,255,255,0.08); }
     .dir-btn.saving  { opacity: 0.45; pointer-events: none; }
 
-    /* ── Sidebar warning icon ────────────────────────────────── */
-    .cable-warn { color: #f59e0b; font-size: 0.7rem; flex-shrink: 0; }
+    /* ── Compact color key row ───────────────────────────────── */
+    .color-key-row {
+      display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 0.5rem 0.75rem;
+      font-size: 0.75rem; color: var(--muted);
+    }
+    .ck-swatch { width: 12px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+    .ck-sep { color: var(--border); }
+
+    /* ── Location accordion panel ────────────────────────────── */
+    .loc-panel {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); flex: 1; overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+    .loc-panel-header {
+      padding: 0.6rem 0.85rem; font-size: 0.75rem; font-weight: 600;
+      color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--border); background: var(--surface2);
+      display: flex; justify-content: space-between; align-items: center;
+      flex-shrink: 0;
+    }
+    .loc-list { flex: 1; overflow-y: auto; }
+
+    .loc-item { border-bottom: 1px solid var(--border); }
+    .loc-header {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.4rem 0.75rem; cursor: pointer;
+      background: var(--surface2); transition: background var(--t);
+      user-select: none;
+    }
+    .loc-header:hover { background: #2a2f47; }
+    .loc-chevron { font-size: 0.6rem; color: var(--muted); transition: transform 0.15s; flex-shrink: 0; }
+    .loc-header.open .loc-chevron { transform: rotate(90deg); }
+    .loc-name { flex: 1; font-size: 0.78rem; font-family: var(--mono); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .loc-count { font-size: 0.65rem; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 0 5px; flex-shrink: 0; }
+
+    .loc-cables { background: var(--surface); }
+    .cable-row {
+      display: flex; align-items: center; gap: 0.35rem;
+      padding: 0.28rem 0.75rem; border-bottom: 1px solid rgba(46,50,80,0.5);
+    }
+    .cable-row:last-child { border-bottom: none; }
+    .cable-swatch { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .cable-short { flex: 1; font-size: 0.68rem; font-family: var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .dir-select, .size-select {
+      font-size: 0.65rem; padding: 2px 3px;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 3px; cursor: pointer;
+      flex-shrink: 0;
+    }
+    .dir-select  { width: 54px; }
+    .size-select { width: 52px; }
+    .dir-select:focus, .size-select:focus { outline: 1px solid var(--accent); }
+    select option { background: #22263a; }
   </style>
 </head>
 <body>
@@ -207,25 +261,30 @@
 
         <div class="checkpoint-notice">
           <h3>⚠ Review Required</h3>
-          <p>Verify each cable has the correct directional color. Click any location marker or cable to inspect. When satisfied, click <strong>Continue</strong>.</p>
+          <p>Click a location to highlight its cables and correct direction or size. Continue when all assignments look right.</p>
         </div>
 
-        <div class="color-key-card">
-          <h4>Direction Color Key</h4>
-          <div class="color-key">
-            <div class="color-row"><span class="swatch" style="background:#FFA500"></span><span>North</span></div>
-            <div class="color-row"><span class="swatch" style="background:#008000"></span><span>East</span></div>
-            <div class="color-row"><span class="swatch" style="background:#8B4513"></span><span>South</span></div>
-            <div class="color-row"><span class="swatch" style="background:#708090"></span><span>West</span></div>
-            <div class="color-row"><span class="swatch" style="background:#C5D9B5; border:1px solid #555"></span><span>OLT</span></div>
-            <div class="color-row"><span class="swatch" style="background:#FF0000"></span><span>MST tap</span></div>
+        <div class="color-key-row">
+          <span class="ck-swatch" style="background:#FFA500"></span>N
+          <span class="ck-sep">·</span>
+          <span class="ck-swatch" style="background:#008000"></span>E
+          <span class="ck-sep">·</span>
+          <span class="ck-swatch" style="background:#8B4513"></span>S
+          <span class="ck-sep">·</span>
+          <span class="ck-swatch" style="background:#708090"></span>W
+          <span class="ck-sep">·</span>
+          <span class="ck-swatch" style="background:#C5D9B5;border:1px solid #555"></span>OLT
+          <span class="ck-sep">·</span>
+          <span class="ck-swatch" style="background:#FF0000"></span>MST
+        </div>
+
+        <div class="loc-panel">
+          <div class="loc-panel-header">
+            Locations
+            <span id="locCount" style="font-weight:400;text-transform:none;letter-spacing:0"></span>
           </div>
-        </div>
-
-        <div class="cable-list-card">
-          <div class="cable-list-header">All Cables <span id="cableCount"></span></div>
-          <div class="cable-list-body" id="cableList">
-            <div style="padding:1rem; color:var(--muted); font-size:0.8rem;">Loading…</div>
+          <div class="loc-list" id="locList">
+            <div style="padding:1rem;color:var(--muted);font-size:0.8rem">Loading…</div>
           </div>
         </div>
 
@@ -250,208 +309,345 @@
   </div>
 
   <script>
-    // ── Leaflet setup ────────────────────────────────────────────────────────
-    const map = L.map("map", { zoomControl: true, attributionControl: true });
+    const CABLE_GRAY   = "#6b7a99";
+    const CABLE_WEIGHT = 2.5;
+    const DIR_COLORS   = { NORTH:'#FFA500', EAST:'#008000', SOUTH:'#8B4513',
+                           WEST:'#708090', OLT:'#C5D9B5', MST:'#FF0000' };
 
+    // ── Leaflet ───────────────────────────────────────────────────────────────
+    const map = L.map("map", { zoomControl: true, attributionControl: true });
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "© OpenStreetMap contributors",
-      maxZoom: 20,
+      attribution: "© OpenStreetMap contributors", maxZoom: 20,
     }).addTo(map);
 
     function makeIcon(color) {
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14">
-        <circle cx="7" cy="7" r="6" fill="${color}" stroke="#fff" stroke-width="2"/>
-      </svg>`;
-      return L.divIcon({ html: svg, className: "",
-        iconSize: [14,14], iconAnchor: [7,7], popupAnchor: [0,-10] });
+      return L.divIcon({
+        html: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14">
+          <circle cx="7" cy="7" r="6" fill="${color}" stroke="#fff" stroke-width="2"/></svg>`,
+        className: "", iconSize:[14,14], iconAnchor:[7,7], popupAnchor:[0,-10],
+      });
     }
 
-    const defaultNodeIcon = makeIcon("#4f8ef7");
     const layerLines  = L.featureGroup().addTo(map);
     const layerPoints = L.featureGroup().addTo(map);
-    const cableLayerMap = {};   // cable name → Leaflet polyline
-    const cableProps    = {};   // cable name → mutable {color, direction, bearing, confidence}
+    const cableLayerMap = {};
+    const cableProps    = {};
+    const locationLatLngs = {};
 
-    // ── Popup builder (reads cableProps at open time so overrides show live) ─
+    // ── Highlights ────────────────────────────────────────────────────────────
+    let activeHighlights    = [];
+    let activeLocationCables = null;
+
+    function clearHighlights() {
+      activeHighlights.forEach(({layer}) =>
+        layer.eachLayer(l => l.setStyle({ color: CABLE_GRAY, weight: CABLE_WEIGHT, opacity: 0.65 }))
+      );
+      activeHighlights = [];
+      activeLocationCables = null;
+    }
+
+    function highlightCables(cableList) {
+      clearHighlights();
+      activeLocationCables = cableList;
+      (cableList || []).forEach(c => {
+        const layer = cableLayerMap[c.name];
+        if (!layer) return;
+        layer.eachLayer(l => l.setStyle({ color: c.color, weight: 4, opacity: 1 }));
+        activeHighlights.push({ layer });
+      });
+    }
+
+    map.on("popupclose", () => {
+      // Only clear highlights if no accordion item is open
+      if (!document.querySelector(".loc-header.open")) clearHighlights();
+    });
+
+    // ── Cable line popup ──────────────────────────────────────────────────────
     function buildCablePopup(cable) {
       const p = cableProps[cable] || {};
-      const confBadge = (p.confidence && p.confidence !== "ok")
-        ? `<div class="conf-badge conf-${p.confidence}">${p.confidence.toUpperCase()} — direction may need review</div>`
-        : "";
-      const bearingLine = (p.bearing != null)
-        ? `<div style="color:#8892b0;font-size:0.72rem;margin-bottom:4px;">bearing ${p.bearing}°</div>`
-        : "";
-      const btnHtml = ["NORTH","EAST","SOUTH","WEST","OLT","MST"].map(d =>
-        `<button class="dir-btn" data-cable="${cable}" data-dir="${d}">${d}</button>`
-      ).join("");
-      return `
-        <div class="popup-title">${cable}</div>
-        ${confBadge}
-        ${bearingLine}
+      const badge = (p.confidence && p.confidence !== "ok")
+        ? `<div class="conf-badge conf-${p.confidence}">${p.confidence.toUpperCase()} — may need review</div>` : "";
+      const brg = p.bearing != null
+        ? `<div style="color:#8892b0;font-size:0.72rem;margin-bottom:4px;">bearing ${p.bearing}°</div>` : "";
+      const btns = ["NORTH","EAST","SOUTH","WEST","OLT","MST"].map(d =>
+        `<button class="dir-btn" data-cable="${cable}" data-dir="${d}">${d}</button>`).join("");
+      return `<div class="popup-title">${cable}</div>${badge}${brg}
         <div style="display:flex;align-items:center;gap:6px;margin-top:2px;margin-bottom:2px;">
           <span class="popup-swatch" style="background:${p.color||'#888'}"></span>
           <span>${p.direction||''}</span>
         </div>
         <div class="override-section">
           <div class="override-label">Override direction:</div>
-          <div class="override-btns">${btnHtml}</div>
+          <div class="override-btns">${btns}</div>
         </div>`;
     }
 
-    // ── Load GeoJSON ─────────────────────────────────────────────────────────
+    // ── Apply direction update everywhere ─────────────────────────────────────
+    function applyDirectionUpdate(cable, cssColor, dirLabel) {
+      if (cableProps[cable]) {
+        cableProps[cable].color      = cssColor;
+        cableProps[cable].direction  = dirLabel;
+        cableProps[cable].confidence = "ok";
+      }
+      // Update every accordion row for this cable
+      document.querySelectorAll(".cable-row").forEach(row => {
+        if (row.dataset.cable !== cable) return;
+        const sw  = row.querySelector(".cable-swatch");
+        const sel = row.querySelector(".dir-select");
+        if (sw)  sw.style.background = cssColor;
+        if (sel) sel.value = dirLabel.toUpperCase();
+      });
+      // Re-highlight with new color if this cable is active
+      if (activeLocationCables) {
+        activeLocationCables = activeLocationCables.map(c =>
+          c.name === cable ? { ...c, color: cssColor } : c
+        );
+        highlightCables(activeLocationCables);
+      }
+      map.closePopup();
+    }
+
+    // ── Apply cable rename everywhere ─────────────────────────────────────────
+    function applyRename(oldName, newName) {
+      if (cableProps[oldName])    { cableProps[newName]    = cableProps[oldName];    delete cableProps[oldName]; }
+      if (cableLayerMap[oldName]) { cableLayerMap[newName] = cableLayerMap[oldName]; delete cableLayerMap[oldName]; }
+      document.querySelectorAll("[data-cable]").forEach(el => {
+        if (el.dataset.cable === oldName) el.dataset.cable = newName;
+      });
+      // Update short-name display size badge
+      const newSize = (newName.match(/(\d{2,3}CT)/i) || [])[1] || "";
+      document.querySelectorAll(".cable-row").forEach(row => {
+        if (row.dataset.cable !== newName) return;
+        const sh = row.querySelector(".cable-short");
+        if (sh) sh.textContent = sh.textContent.replace(/\(\d{2,3}CT\)/i, `(${newSize})`);
+      });
+      if (activeLocationCables) {
+        activeLocationCables = activeLocationCables.map(c =>
+          c.name === oldName ? { ...c, name: newName } : c
+        );
+      }
+    }
+
+    // ── Build location accordion ──────────────────────────────────────────────
+    function buildAccordion(points) {
+      const locList  = document.getElementById("locList");
+      const locCount = document.getElementById("locCount");
+      const withCables = points
+        .filter(f => (f.properties.cables || []).length > 0)
+        .sort((a, b) => a.properties.name.localeCompare(b.properties.name));
+
+      locCount.textContent = `(${withCables.length})`;
+      locList.innerHTML = "";
+
+      withCables.forEach(f => {
+        const p      = f.properties;
+        const latlng = [f.geometry.coordinates[1], f.geometry.coordinates[0]];
+        locationLatLngs[p.name] = latlng;
+
+        const item    = document.createElement("div");
+        item.className = "loc-item";
+
+        // Header
+        const hdr = document.createElement("div");
+        hdr.className = "loc-header";
+        hdr.innerHTML = `
+          <span class="loc-chevron">▶</span>
+          <span class="loc-name">${p.name}</span>
+          <span class="loc-count">${p.cables.length}</span>`;
+
+        // Cable section
+        const section = document.createElement("div");
+        section.className = "loc-cables";
+        section.style.display = "none";
+
+        p.cables.forEach(c => section.appendChild(buildCableRow(c)));
+
+        if ((p.missing_cables || []).length) {
+          const warn = document.createElement("div");
+          warn.style.cssText = "padding:0.3rem 0.75rem;font-size:0.68rem;color:#ef4444;";
+          warn.textContent = `✕ No KMZ geometry: ${p.missing_cables.join(", ")}`;
+          section.appendChild(warn);
+        }
+
+        hdr.addEventListener("click", () => {
+          const open = hdr.classList.toggle("open");
+          section.style.display = open ? "block" : "none";
+          if (open) {
+            highlightCables(p.cables);
+            map.panTo(latlng, { animate: true, duration: 0.4 });
+          } else {
+            clearHighlights();
+          }
+        });
+
+        item.appendChild(hdr);
+        item.appendChild(section);
+        locList.appendChild(item);
+      });
+    }
+
+    function buildCableRow(cable) {
+      const row = document.createElement("div");
+      row.className  = "cable-row";
+      row.dataset.cable = cable.name;
+
+      // Direction select
+      const dirSel = document.createElement("select");
+      dirSel.className = "dir-select";
+      dirSel.dataset.cable = cable.name;
+      const dirKey = cable.label.toUpperCase();
+      [["NORTH","N↑"],["EAST","E→"],["SOUTH","S↓"],["WEST","W←"],["OLT","OLT"],["MST","MST"]].forEach(([v,l]) => {
+        const o = document.createElement("option");
+        o.value = v; o.textContent = l;
+        if (v === dirKey) o.selected = true;
+        dirSel.appendChild(o);
+      });
+
+      // Size select
+      const sizeSel = document.createElement("select");
+      sizeSel.className = "size-select";
+      sizeSel.dataset.cable = cable.name;
+      ["12CT","24CT","48CT","96CT","144CT"].forEach(sz => {
+        const o = document.createElement("option");
+        o.value = sz; o.textContent = sz;
+        if (sz === cable.size) o.selected = true;
+        sizeSel.appendChild(o);
+      });
+
+      // Row inner HTML (swatch + name), then append selects
+      row.innerHTML = `
+        <span class="cable-swatch" style="background:${cable.color}"></span>
+        <span class="cable-short" title="${cable.name}">${cable.short_name || cable.name}</span>`;
+      row.appendChild(dirSel);
+      row.appendChild(sizeSel);
+
+      // Direction change
+      dirSel.addEventListener("change", function() {
+        const cableName = this.closest(".cable-row").dataset.cable;
+        const direction = this.value;
+        this.disabled = true;
+        fetch("/override/{{ job_id }}", {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ cable: cableName, direction }),
+        })
+        .then(r => r.json())
+        .then(res => {
+          if (!res.ok) { alert("Override failed: " + res.error); return; }
+          applyDirectionUpdate(cableName, res.color, res.direction);
+        })
+        .catch(e => alert("Error: " + e.message))
+        .finally(() => this.disabled = false);
+      });
+
+      // Size change
+      sizeSel.addEventListener("change", function() {
+        const cableName = this.closest(".cable-row").dataset.cable;
+        const size = this.value;
+        this.disabled = true;
+        fetch("/resize/{{ job_id }}", {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ cable: cableName, size }),
+        })
+        .then(r => r.json())
+        .then(res => {
+          if (!res.ok) { alert("Resize failed: " + res.error); return; }
+          if (res.new_cable !== res.old_cable) applyRename(res.old_cable, res.new_cable);
+        })
+        .catch(e => alert("Error: " + e.message))
+        .finally(() => this.disabled = false);
+      });
+
+      return row;
+    }
+
+    // ── Load GeoJSON ──────────────────────────────────────────────────────────
     fetch("/geojson/{{ job_id }}")
       .then(r => r.json())
       .then(data => {
         const statusEl = document.getElementById("mapStatus");
         const features = data.features || [];
-
         if (features.length === 0) {
-          statusEl.textContent = "No map data available — check step 1/2 output";
-          return;
+          statusEl.textContent = "No map data available — check step 1/2 output"; return;
         }
 
-        const lines  = features.filter(f => f.geometry.type === "LineString");
+        const cables = features.filter(f => f.geometry.type === "MultiLineString");
         const points = features.filter(f => f.geometry.type === "Point");
 
-        // Draw cable lines
-        lines.forEach(f => {
+        // Draw cable lines (gray; color shows on node expand)
+        cables.forEach(f => {
           const p = f.properties;
-          const latlngs = f.geometry.coordinates.map(c => [c[1], c[0]]);
           const uncertain = p.confidence === "diagonal" || p.confidence === "short";
-
-          const layer = L.polyline(latlngs, {
-            color:     p.color,
-            weight:    3.5,
-            opacity:   0.85,
-            dashArray: uncertain ? "8 5" : null,
-          }).addTo(layerLines);
-
-          // Seed mutable props (overrides update this object in place)
-          cableProps[p.cable] = {
-            color: p.color, direction: p.direction,
-            bearing: p.bearing, confidence: p.confidence,
-          };
-
-          layer.bindPopup(() => buildCablePopup(p.cable), { maxWidth: 320 });
-          cableLayerMap[p.cable] = layer;
+          const fg = L.featureGroup();
+          f.geometry.coordinates.forEach(seg => {
+            const pl = L.polyline(seg.map(c => [c[1],c[0]]), {
+              color: CABLE_GRAY, weight: CABLE_WEIGHT, opacity: 0.65,
+              dashArray: uncertain ? "6 4" : null,
+            });
+            pl.bindPopup(() => buildCablePopup(p.cable), { maxWidth: 320 });
+            fg.addLayer(pl);
+          });
+          fg.addTo(layerLines);
+          cableProps[p.cable] = { color: p.color, direction: p.direction,
+                                  bearing: p.bearing, confidence: p.confidence };
+          cableLayerMap[p.cable] = fg;
         });
 
         // Draw location markers
         points.forEach(f => {
           const p      = f.properties;
           const latlng = [f.geometry.coordinates[1], f.geometry.coordinates[0]];
-
+          const hasMissing = (p.missing_cables || []).length > 0;
           const cablesHtml = (p.cables || []).map(c =>
             `<div class="popup-cable">
                <span class="popup-swatch" style="background:${c.color}"></span>
                <span class="popup-cable-name">${c.name}</span>
-             </div>`
-          ).join("");
-
-          const missingHtml = (p.missing_cables || []).length
-            ? `<div style="color:#ef4444;font-size:0.72rem;margin-top:6px;">
-                 ✕ No KMZ geometry: ${p.missing_cables.join(", ")}
-               </div>`
-            : "";
-
-          const icon = (p.missing_cables || []).length ? makeIcon("#ef4444") : defaultNodeIcon;
-          const marker = L.marker(latlng, { icon }).addTo(layerPoints);
-          marker.bindPopup(`
-            <div class="popup-title">${p.name}</div>
-            ${cablesHtml || '<span style="color:#666">No cables found</span>'}
-            ${missingHtml}
-          `, { maxWidth: 340 });
+               <span style="font-size:0.68rem;color:#8892b0;margin-left:4px">${c.label}</span>
+             </div>`).join("");
+          const missingHtml = hasMissing
+            ? `<div style="color:#ef4444;font-size:0.72rem;margin-top:6px">✕ No KMZ: ${p.missing_cables.join(", ")}</div>` : "";
+          const marker = L.marker(latlng, {
+            icon: hasMissing ? makeIcon("#ef4444") : makeIcon("#4f8ef7"),
+          }).addTo(layerPoints);
+          marker.on("popupopen", () => highlightCables(p.cables));
+          marker.bindPopup(
+            `<div class="popup-title">${p.name}</div>${cablesHtml||'<span style="color:#666">No cables</span>'}${missingHtml}`,
+            { maxWidth: 340 });
         });
 
-        // Fit map to cable extent
         const allLayers = L.featureGroup([layerLines, layerPoints]);
-        if (allLayers.getLayers().length) {
-          map.fitBounds(allLayers.getBounds().pad(0.05));
-        }
+        if (allLayers.getLayers().length) map.fitBounds(allLayers.getBounds().pad(0.05));
 
-        // Summary status line
         const s = data.summary || {};
         const issues = [];
         if (s.diagonal > 0) issues.push(`⚠ ${s.diagonal} diagonal`);
         if (s.short    > 0) issues.push(`⚠ ${s.short} short`);
         if (s.missing  > 0) issues.push(`✕ ${s.missing} missing from KMZ`);
         statusEl.textContent = issues.length
-          ? `${lines.length} cable(s) — ${issues.join(" · ")} · click any element to inspect`
-          : `${lines.length} cable(s) · ${points.length} location(s) — all OK · click any element to inspect`;
+          ? `${cables.length} cable(s) — ${issues.join(" · ")} · expand a location to review`
+          : `${cables.length} cable(s) · ${points.length} location(s) — all OK · expand a location to review`;
 
-        // ── Build sidebar cable list ─────────────────────────────────────────
-        const listEl  = document.getElementById("cableList");
-        const countEl = document.getElementById("cableCount");
-        countEl.textContent = `(${lines.length})`;
-        listEl.innerHTML = "";
-
-        lines.sort((a, b) => a.properties.cable.localeCompare(b.properties.cable));
-        lines.forEach(f => {
-          const p    = f.properties;
-          const item = document.createElement("div");
-          item.className = "cable-item";
-          item.dataset.cable = p.cable;
-          item.title = p.cable;
-          const warnIcon = (p.confidence === "diagonal" || p.confidence === "short")
-            ? `<span class="cable-warn" title="${p.confidence}">⚠</span>` : "";
-          item.innerHTML = `
-            <span class="cable-dot" style="background:${p.color}"></span>
-            <span class="cable-name">${p.cable}</span>
-            ${warnIcon}
-            <span class="cable-dir">${p.direction}</span>`;
-          item.addEventListener("click", () => {
-            const layer = cableLayerMap[p.cable];
-            if (layer) { map.fitBounds(layer.getBounds().pad(0.1)); layer.openPopup(); }
-          });
-          listEl.appendChild(item);
-        });
+        buildAccordion(points);
       })
       .catch(err => {
         document.getElementById("mapStatus").textContent = "Failed to load map data: " + err.message;
       });
 
-    // ── Direction override — event delegation ────────────────────────────────
+    // ── Cable line popup override buttons (event delegation) ──────────────────
     document.addEventListener("click", e => {
       const btn = e.target.closest(".dir-btn");
       if (!btn) return;
-      const cable     = btn.dataset.cable;
-      const direction = btn.dataset.dir;
+      const cable = btn.dataset.cable, direction = btn.dataset.dir;
       btn.classList.add("saving");
-
       fetch("/override/{{ job_id }}", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ cable, direction }),
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ cable, direction }),
       })
       .then(r => r.json())
-      .then(result => {
-        if (!result.ok) { alert("Override failed: " + result.error); return; }
-
-        // Update mutable props so the popup rebuilds correctly if reopened
-        if (cableProps[cable]) {
-          cableProps[cable].color      = result.color;
-          cableProps[cable].direction  = result.direction;
-          cableProps[cable].confidence = "ok";
-        }
-
-        // Update line on map
-        const layer = cableLayerMap[cable];
-        if (layer) layer.setStyle({ color: result.color, dashArray: null });
-
-        // Update sidebar item
-        for (const el of document.querySelectorAll(".cable-item")) {
-          if (el.dataset.cable === cable) {
-            el.querySelector(".cable-dot").style.background = result.color;
-            el.querySelector(".cable-dir").textContent = result.direction;
-            const warn = el.querySelector(".cable-warn");
-            if (warn) warn.remove();
-            break;
-          }
-        }
-
-        map.closePopup();
+      .then(res => {
+        if (!res.ok) { alert("Override failed: " + res.error); return; }
+        applyDirectionUpdate(cable, res.color, res.direction);
       })
-      .catch(err => alert("Override error: " + err.message))
+      .catch(e => alert("Error: " + e.message))
       .finally(() => btn.classList.remove("saving"));
     });
   </script>
