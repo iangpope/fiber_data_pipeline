@@ -340,6 +340,7 @@ def generate_colored_table(named_edges: list, location_coords: dict,
     name_to_coords = {name: coords for name, coords in named_edges}
     red_cables     = set()   # cable names confirmed as MST (colored red)
     all_colored_rows = []    # collect (entries, conn_cols, raw_colors) for two-pass output
+    cable_confidence: dict[str, dict] = {}  # cable -> {bearing, confidence} for map overlay
 
     # Debug/confidence tracking: populated during the main loop and printed at the end.
     dbg_missing_cables  = []   # (location, cable_name) -- cable not found in KMZ
@@ -438,6 +439,7 @@ def generate_colored_table(named_edges: list, location_coords: dict,
             if olt_loc and is_olt_cable(cable, olt_loc):
                 raw.append((col, "olt", 0))
                 entries.append(cable)
+                cable_confidence.setdefault(str(cable), {"bearing": None, "confidence": "ok"})
                 continue
 
             # -- Look up the cable's coordinate geometry from the KMZ --
@@ -445,6 +447,7 @@ def generate_colored_table(named_edges: list, location_coords: dict,
             if not coords:
                 dbg_missing_cables.append((str(loc), str(cable)))
                 entries.append(cable)
+                cable_confidence[str(cable)] = {"bearing": None, "confidence": "missing"}
                 continue
 
             # Ensure coordinate sequence starts at the current splice location.
@@ -468,11 +471,13 @@ def generate_colored_table(named_edges: list, location_coords: dict,
                     raw.append((col, "red", 0))
                     red_cables.add(cable)
                     entries.append(cable)
+                    cable_confidence.setdefault(str(cable), {"bearing": None, "confidence": "ok"})
                     continue
 
             # -- Walk 5 m along the cable and compute the bearing --
             # Walking a short distance away from the splice avoids the
             # erratic bearing that can result from very small initial segments.
+            is_short = False
             dist   = 0
             walked = latlon
             for i in range(len(coords) - 1):
@@ -488,6 +493,7 @@ def generate_colored_table(named_edges: list, location_coords: dict,
 
             # If the cable is shorter than 5 m, use its far endpoint.
             if walked == latlon:
+                is_short = True
                 cable_len = sum(
                     geodesic(coords[i], coords[i + 1]).meters
                     for i in range(len(coords) - 1)
@@ -497,10 +503,15 @@ def generate_colored_table(named_edges: list, location_coords: dict,
 
             b     = bearing(latlon, walked)
             color = bearing_to_color(b)
+            conf  = "short" if is_short else ("diagonal" if is_diagonal_bearing(b) else "ok")
             if is_diagonal_bearing(b):
                 dbg_diagonal_cables.append((str(loc), str(cable), round(b, 1), color))
             raw.append((col, color, b))
             entries.append(cable)
+            _prio = {"missing": 3, "short": 2, "diagonal": 1, "ok": 0}
+            _prev = cable_confidence.get(str(cable), {})
+            if _prio.get(conf, 0) >= _prio.get(_prev.get("confidence", "ok"), 0):
+                cable_confidence[str(cable)] = {"bearing": round(b, 1), "confidence": conf}
 
         all_colored_rows.append((entries, conn_cols, raw))
 
@@ -585,6 +596,19 @@ def generate_colored_table(named_edges: list, location_coords: dict,
         print("\n[DIAGONAL BEARING] none")
 
     print("=== END DEBUG LOG ===\n")
+
+    # Save confidence data for the web UI map overlay (harmless if web UI not used).
+    import json as _json
+    _conf_path = os.path.join(os.path.dirname(os.path.abspath(output_path)), "direction_confidence.json")
+    with open(_conf_path, "w") as _f:
+        _json.dump({
+            "cables":  cable_confidence,
+            "summary": {
+                "diagonal": len(dbg_diagonal_cables),
+                "short":    len(dbg_short_cables),
+                "missing":  len(dbg_missing_cables),
+            },
+        }, _f)
 
     wb.save(output_path)
     print(f"Colored table saved to {output_path}")

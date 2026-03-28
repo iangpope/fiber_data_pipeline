@@ -5,58 +5,455 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Checkpoint Review — Fiber Pipeline</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    /* ── Map layout ─────────────────────────────────────── */
+    .checkpoint-layout {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      grid-template-rows: auto 1fr auto;
+      gap: 1rem;
+      height: calc(100vh - 130px);
+    }
+
+    .map-area {
+      grid-row: 1 / 3;
+      grid-column: 1 / 2;
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--border);
+      position: relative;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+      min-height: 500px;
+      background: #1a1d27;
+    }
+
+    .map-status {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15,17,23,0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.3rem 0.9rem;
+      font-size: 0.78rem;
+      color: var(--muted);
+      z-index: 1000;
+      pointer-events: none;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────── */
+    .sidebar {
+      grid-row: 1 / 3;
+      grid-column: 2 / 3;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      overflow: hidden;
+    }
+
+    .checkpoint-notice {
+      background: rgba(245,158,11,0.08);
+      border: 1px solid rgba(245,158,11,0.3);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .checkpoint-notice h3 { font-size: 0.95rem; font-weight: 700; margin-bottom: 0.3rem; }
+    .checkpoint-notice p  { font-size: 0.8rem; color: var(--muted); line-height: 1.45; }
+
+    .color-key-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.85rem 1rem;
+    }
+    .color-key-card h4 { font-size: 0.78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.6rem; }
+
+    .color-key { display: flex; flex-direction: column; gap: 0.4rem; }
+    .color-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.82rem; }
+    .swatch { width: 18px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+    .cable-list-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .cable-list-header {
+      padding: 0.7rem 1rem;
+      font-size: 0.78rem; font-weight: 600; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+    }
+    .cable-list-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.4rem 0;
+    }
+    .cable-item {
+      display: flex; align-items: center; gap: 0.6rem;
+      padding: 0.3rem 1rem; font-size: 0.77rem;
+      cursor: pointer; transition: background var(--t);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .cable-item:hover { background: var(--surface2); }
+    .cable-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .cable-name { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cable-dir { font-size: 0.7rem; color: var(--border); margin-left: auto; flex-shrink: 0; }
+
+    /* ── Action bar ──────────────────────────────────────── */
+    .map-actions {
+      grid-row: 3;
+      grid-column: 1 / 3;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.85rem 1.25rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .action-left { display: flex; gap: 0.75rem; align-items: center; }
+    .dl-link {
+      font-size: 0.83rem; color: var(--accent);
+      padding: 0.4rem 0.9rem;
+      border: 1px solid rgba(79,142,247,0.3);
+      border-radius: var(--radius-sm); transition: var(--t);
+    }
+    .dl-link:hover { background: rgba(79,142,247,0.1); text-decoration: none; }
+
+    /* Leaflet popup dark override */
+    .leaflet-popup-content-wrapper {
+      background: #1a1d27 !important;
+      color: #e2e8f0 !important;
+      border: 1px solid #2e3250 !important;
+      border-radius: 8px !important;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5) !important;
+    }
+    .leaflet-popup-tip { background: #1a1d27 !important; }
+    .leaflet-popup-content { font-family: 'Inter', sans-serif; font-size: 0.83rem; line-height: 1.55; }
+    .popup-title { font-weight: 700; font-size: 0.9rem; margin-bottom: 0.4rem; color: #e2e8f0; }
+    .popup-cable { display: flex; align-items: center; gap: 0.4rem; margin: 0.2rem 0; }
+    .popup-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+    .popup-cable-name { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: #8892b0; }
+
+    /* ── Confidence badges ───────────────────────────────────── */
+    .conf-badge {
+      display: inline-block; font-size: 0.65rem; font-weight: 700;
+      padding: 1px 6px; border-radius: 3px; margin-bottom: 5px;
+    }
+    .conf-diagonal { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.35); }
+    .conf-short    { background: rgba(239,68,68,0.12);  color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
+
+    /* ── Direction override buttons ─────────────────────────── */
+    .override-section { margin-top: 9px; border-top: 1px solid #2e3250; padding-top: 8px; }
+    .override-label   { font-size: 0.68rem; color: #8892b0; margin-bottom: 5px; }
+    .override-btns    { display: flex; flex-wrap: wrap; gap: 4px; }
+    .dir-btn {
+      padding: 3px 9px; font-size: 0.7rem; font-weight: 600;
+      border-radius: 4px; cursor: pointer; border: 1px solid;
+      background: transparent; transition: background 0.12s;
+    }
+    .dir-btn[data-dir="NORTH"] { color: #FFA500; border-color: #FFA500; }
+    .dir-btn[data-dir="EAST"]  { color: #4CAF50; border-color: #008000; }
+    .dir-btn[data-dir="SOUTH"] { color: #CD853F; border-color: #8B4513; }
+    .dir-btn[data-dir="WEST"]  { color: #A9B8C3; border-color: #708090; }
+    .dir-btn[data-dir="OLT"]   { color: #C5D9B5; border-color: #C5D9B5; }
+    .dir-btn[data-dir="MST"]   { color: #FF6666; border-color: #FF0000; }
+    .dir-btn:hover   { background: rgba(255,255,255,0.08); }
+    .dir-btn.saving  { opacity: 0.45; pointer-events: none; }
+
+    /* ── Sidebar warning icon ────────────────────────────────── */
+    .cable-warn { color: #f59e0b; font-size: 0.7rem; flex-shrink: 0; }
+  </style>
 </head>
 <body>
-  <div class="page-wrap">
+  <div class="page-wrap" style="max-width: 100%; padding: 0 1rem 1rem;">
 
     <header class="site-header">
       <div class="header-inner">
         <span class="logo">🔦</span>
         <div>
-          <h1>Checkpoint Review</h1>
-          <p class="subtitle">Steps 1–2 complete — verify direction colors before continuing</p>
+          <h1>Checkpoint — Review Direction Colors</h1>
+          <p class="subtitle">Steps 1–2 complete · Verify cable colors on the map before continuing</p>
         </div>
       </div>
     </header>
 
-    <main class="checkpoint-card">
+    <div class="checkpoint-layout">
 
-      <div class="checkpoint-icon">⚠️</div>
-      <h2>Review Required</h2>
-      <p class="checkpoint-desc">
-        Steps 1 and 2 have finished. The <strong>Colored Connections Table</strong> has been
-        generated. Please download it and verify that each cable has the correct
-        directional color before running the remaining steps (3–10).
-      </p>
-
-      <div class="color-key">
-        <div class="color-row"><span class="swatch" style="background:#FFA500"></span><span>North</span></div>
-        <div class="color-row"><span class="swatch" style="background:#008000"></span><span>East</span></div>
-        <div class="color-row"><span class="swatch" style="background:#8B4513"></span><span>South</span></div>
-        <div class="color-row"><span class="swatch" style="background:#708090"></span><span>West</span></div>
-        <div class="color-row"><span class="swatch" style="background:#C5D9B5"></span><span>OLT</span></div>
-        <div class="color-row"><span class="swatch" style="background:#FF0000"></span><span>MST</span></div>
+      <!-- Map -->
+      <div class="map-area">
+        <div id="map"></div>
+        <div class="map-status" id="mapStatus">Loading cable network…</div>
       </div>
 
-      {% if has_conn_table %}
-      <a href="/download/{{ job_id }}/connections" class="btn-download">
-        ⬇ Download Colored Connections Table
-      </a>
-      {% else %}
-      <p class="warn-text">⚠ Connections table file not found — check that step 2 completed successfully.</p>
-      {% endif %}
+      <!-- Sidebar -->
+      <aside class="sidebar">
 
-      <div class="checkpoint-actions">
-        <form method="POST" action="/checkpoint/{{ job_id }}/stop">
-          <button type="submit" class="btn-secondary">✕ Stop Here</button>
-        </form>
+        <div class="checkpoint-notice">
+          <h3>⚠ Review Required</h3>
+          <p>Verify each cable has the correct directional color. Click any location marker or cable to inspect. When satisfied, click <strong>Continue</strong>.</p>
+        </div>
+
+        <div class="color-key-card">
+          <h4>Direction Color Key</h4>
+          <div class="color-key">
+            <div class="color-row"><span class="swatch" style="background:#FFA500"></span><span>North</span></div>
+            <div class="color-row"><span class="swatch" style="background:#008000"></span><span>East</span></div>
+            <div class="color-row"><span class="swatch" style="background:#8B4513"></span><span>South</span></div>
+            <div class="color-row"><span class="swatch" style="background:#708090"></span><span>West</span></div>
+            <div class="color-row"><span class="swatch" style="background:#C5D9B5; border:1px solid #555"></span><span>OLT</span></div>
+            <div class="color-row"><span class="swatch" style="background:#FF0000"></span><span>MST tap</span></div>
+          </div>
+        </div>
+
+        <div class="cable-list-card">
+          <div class="cable-list-header">All Cables <span id="cableCount"></span></div>
+          <div class="cable-list-body" id="cableList">
+            <div style="padding:1rem; color:var(--muted); font-size:0.8rem;">Loading…</div>
+          </div>
+        </div>
+
+      </aside>
+
+      <!-- Action bar -->
+      <div class="map-actions">
+        <div class="action-left">
+          {% if has_conn_table %}
+          <a href="/download/{{ job_id }}/connections" class="dl-link">⬇ Colored Connections Table</a>
+          {% endif %}
+          <form method="POST" action="/checkpoint/{{ job_id }}/stop" style="display:inline;">
+            <button type="submit" class="btn-secondary">✕ Stop Here</button>
+          </form>
+        </div>
         <form method="POST" action="/checkpoint/{{ job_id }}/continue">
           <button type="submit" class="btn-primary">▶ Continue — Run Steps 3–10</button>
         </form>
       </div>
 
-    </main>
-
+    </div>
   </div>
+
+  <script>
+    // ── Leaflet setup ────────────────────────────────────────────────────────
+    const map = L.map("map", { zoomControl: true, attributionControl: true });
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap contributors",
+      maxZoom: 20,
+    }).addTo(map);
+
+    function makeIcon(color) {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14">
+        <circle cx="7" cy="7" r="6" fill="${color}" stroke="#fff" stroke-width="2"/>
+      </svg>`;
+      return L.divIcon({ html: svg, className: "",
+        iconSize: [14,14], iconAnchor: [7,7], popupAnchor: [0,-10] });
+    }
+
+    const defaultNodeIcon = makeIcon("#4f8ef7");
+    const layerLines  = L.featureGroup().addTo(map);
+    const layerPoints = L.featureGroup().addTo(map);
+    const cableLayerMap = {};   // cable name → Leaflet polyline
+    const cableProps    = {};   // cable name → mutable {color, direction, bearing, confidence}
+
+    // ── Popup builder (reads cableProps at open time so overrides show live) ─
+    function buildCablePopup(cable) {
+      const p = cableProps[cable] || {};
+      const confBadge = (p.confidence && p.confidence !== "ok")
+        ? `<div class="conf-badge conf-${p.confidence}">${p.confidence.toUpperCase()} — direction may need review</div>`
+        : "";
+      const bearingLine = (p.bearing != null)
+        ? `<div style="color:#8892b0;font-size:0.72rem;margin-bottom:4px;">bearing ${p.bearing}°</div>`
+        : "";
+      const btnHtml = ["NORTH","EAST","SOUTH","WEST","OLT","MST"].map(d =>
+        `<button class="dir-btn" data-cable="${cable}" data-dir="${d}">${d}</button>`
+      ).join("");
+      return `
+        <div class="popup-title">${cable}</div>
+        ${confBadge}
+        ${bearingLine}
+        <div style="display:flex;align-items:center;gap:6px;margin-top:2px;margin-bottom:2px;">
+          <span class="popup-swatch" style="background:${p.color||'#888'}"></span>
+          <span>${p.direction||''}</span>
+        </div>
+        <div class="override-section">
+          <div class="override-label">Override direction:</div>
+          <div class="override-btns">${btnHtml}</div>
+        </div>`;
+    }
+
+    // ── Load GeoJSON ─────────────────────────────────────────────────────────
+    fetch("/geojson/{{ job_id }}")
+      .then(r => r.json())
+      .then(data => {
+        const statusEl = document.getElementById("mapStatus");
+        const features = data.features || [];
+
+        if (features.length === 0) {
+          statusEl.textContent = "No map data available — check step 1/2 output";
+          return;
+        }
+
+        const lines  = features.filter(f => f.geometry.type === "LineString");
+        const points = features.filter(f => f.geometry.type === "Point");
+
+        // Draw cable lines
+        lines.forEach(f => {
+          const p = f.properties;
+          const latlngs = f.geometry.coordinates.map(c => [c[1], c[0]]);
+          const uncertain = p.confidence === "diagonal" || p.confidence === "short";
+
+          const layer = L.polyline(latlngs, {
+            color:     p.color,
+            weight:    3.5,
+            opacity:   0.85,
+            dashArray: uncertain ? "8 5" : null,
+          }).addTo(layerLines);
+
+          // Seed mutable props (overrides update this object in place)
+          cableProps[p.cable] = {
+            color: p.color, direction: p.direction,
+            bearing: p.bearing, confidence: p.confidence,
+          };
+
+          layer.bindPopup(() => buildCablePopup(p.cable), { maxWidth: 320 });
+          cableLayerMap[p.cable] = layer;
+        });
+
+        // Draw location markers
+        points.forEach(f => {
+          const p      = f.properties;
+          const latlng = [f.geometry.coordinates[1], f.geometry.coordinates[0]];
+
+          const cablesHtml = (p.cables || []).map(c =>
+            `<div class="popup-cable">
+               <span class="popup-swatch" style="background:${c.color}"></span>
+               <span class="popup-cable-name">${c.name}</span>
+             </div>`
+          ).join("");
+
+          const missingHtml = (p.missing_cables || []).length
+            ? `<div style="color:#ef4444;font-size:0.72rem;margin-top:6px;">
+                 ✕ No KMZ geometry: ${p.missing_cables.join(", ")}
+               </div>`
+            : "";
+
+          const icon = (p.missing_cables || []).length ? makeIcon("#ef4444") : defaultNodeIcon;
+          const marker = L.marker(latlng, { icon }).addTo(layerPoints);
+          marker.bindPopup(`
+            <div class="popup-title">${p.name}</div>
+            ${cablesHtml || '<span style="color:#666">No cables found</span>'}
+            ${missingHtml}
+          `, { maxWidth: 340 });
+        });
+
+        // Fit map to cable extent
+        const allLayers = L.featureGroup([layerLines, layerPoints]);
+        if (allLayers.getLayers().length) {
+          map.fitBounds(allLayers.getBounds().pad(0.05));
+        }
+
+        // Summary status line
+        const s = data.summary || {};
+        const issues = [];
+        if (s.diagonal > 0) issues.push(`⚠ ${s.diagonal} diagonal`);
+        if (s.short    > 0) issues.push(`⚠ ${s.short} short`);
+        if (s.missing  > 0) issues.push(`✕ ${s.missing} missing from KMZ`);
+        statusEl.textContent = issues.length
+          ? `${lines.length} cable(s) — ${issues.join(" · ")} · click any element to inspect`
+          : `${lines.length} cable(s) · ${points.length} location(s) — all OK · click any element to inspect`;
+
+        // ── Build sidebar cable list ─────────────────────────────────────────
+        const listEl  = document.getElementById("cableList");
+        const countEl = document.getElementById("cableCount");
+        countEl.textContent = `(${lines.length})`;
+        listEl.innerHTML = "";
+
+        lines.sort((a, b) => a.properties.cable.localeCompare(b.properties.cable));
+        lines.forEach(f => {
+          const p    = f.properties;
+          const item = document.createElement("div");
+          item.className = "cable-item";
+          item.dataset.cable = p.cable;
+          item.title = p.cable;
+          const warnIcon = (p.confidence === "diagonal" || p.confidence === "short")
+            ? `<span class="cable-warn" title="${p.confidence}">⚠</span>` : "";
+          item.innerHTML = `
+            <span class="cable-dot" style="background:${p.color}"></span>
+            <span class="cable-name">${p.cable}</span>
+            ${warnIcon}
+            <span class="cable-dir">${p.direction}</span>`;
+          item.addEventListener("click", () => {
+            const layer = cableLayerMap[p.cable];
+            if (layer) { map.fitBounds(layer.getBounds().pad(0.1)); layer.openPopup(); }
+          });
+          listEl.appendChild(item);
+        });
+      })
+      .catch(err => {
+        document.getElementById("mapStatus").textContent = "Failed to load map data: " + err.message;
+      });
+
+    // ── Direction override — event delegation ────────────────────────────────
+    document.addEventListener("click", e => {
+      const btn = e.target.closest(".dir-btn");
+      if (!btn) return;
+      const cable     = btn.dataset.cable;
+      const direction = btn.dataset.dir;
+      btn.classList.add("saving");
+
+      fetch("/override/{{ job_id }}", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ cable, direction }),
+      })
+      .then(r => r.json())
+      .then(result => {
+        if (!result.ok) { alert("Override failed: " + result.error); return; }
+
+        // Update mutable props so the popup rebuilds correctly if reopened
+        if (cableProps[cable]) {
+          cableProps[cable].color      = result.color;
+          cableProps[cable].direction  = result.direction;
+          cableProps[cable].confidence = "ok";
+        }
+
+        // Update line on map
+        const layer = cableLayerMap[cable];
+        if (layer) layer.setStyle({ color: result.color, dashArray: null });
+
+        // Update sidebar item
+        for (const el of document.querySelectorAll(".cable-item")) {
+          if (el.dataset.cable === cable) {
+            el.querySelector(".cable-dot").style.background = result.color;
+            el.querySelector(".cable-dir").textContent = result.direction;
+            const warn = el.querySelector(".cable-warn");
+            if (warn) warn.remove();
+            break;
+          }
+        }
+
+        map.closePopup();
+      })
+      .catch(err => alert("Override error: " + err.message))
+      .finally(() => btn.classList.remove("saving"));
+    });
+  </script>
 </body>
 </html>

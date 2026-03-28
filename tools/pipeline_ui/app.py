@@ -4,7 +4,7 @@ app.py -- Pipeline Web UI Flask application.
 Runs the full fiber data pipeline from the browser with:
   - Dual file upload (KMZ + cut sheet; optional HAF + tap template)
   - Real-time log streaming via Server-Sent Events (SSE)
-  - Inline checkpoint review page (after step 2)
+  - Inline checkpoint review page with Leaflet map overlay (after step 2)
   - Download links for all output files
 """
 
@@ -21,9 +21,11 @@ import threading
 import uuid
 from pathlib import Path
 
+import openpyxl
+from openpyxl.styles import PatternFill
 from flask import (
     Flask, Response, redirect, render_template,
-    request, send_file, session, url_for, flash
+    request, send_file, session, url_for, flash, jsonify
 )
 
 # ---------------------------------------------------------------------------
@@ -35,6 +37,8 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import pipeline_runner
+from map_builder import build_geojson
+
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +237,63 @@ def create_app() -> Flask:
             _JOBS[job_id]["checkpoint_continue"] = False
             _JOBS[job_id]["checkpoint_event"].set()
         return redirect(url_for("complete_page", job_id=job_id))
+
+    # -----------------------------------------------------------------------
+    # GeoJSON API — cable network map data for the checkpoint Leaflet map
+    # -----------------------------------------------------------------------
+    @app.route("/geojson/<job_id>")
+    def geojson(job_id):
+        if job_id not in _JOBS:
+            return jsonify({"type": "FeatureCollection", "features": []})
+        try:
+            data = build_geojson(_JOBS[job_id]["job_dir"])
+        except Exception as exc:
+            data = {"type": "FeatureCollection", "features": [],
+                    "error": str(exc)}
+        return jsonify(data)
+
+    # -----------------------------------------------------------------------
+    # Direction override — update cable fill in the Colored Connections Table
+    # -----------------------------------------------------------------------
+    _DIR_TO_HEX = {
+        "NORTH": "FFA500", "SOUTH": "8B4513", "EAST": "008000",
+        "WEST":  "708090", "OLT":   "C5D9B5", "MST":  "FF0000",
+    }
+    _DIR_LABELS = {
+        "NORTH": "North", "SOUTH": "South", "EAST": "East",
+        "WEST":  "West",  "OLT":   "OLT",   "MST":  "MST",
+    }
+
+    @app.route("/override/<job_id>", methods=["POST"])
+    def override_direction(job_id):
+        if job_id not in _JOBS:
+            return jsonify({"ok": False, "error": "Job not found"}), 404
+        data      = request.get_json(force=True) or {}
+        cable     = str(data.get("cable", "")).strip()
+        direction = str(data.get("direction", "")).upper()
+        if not cable or direction not in _DIR_TO_HEX:
+            return jsonify({"ok": False, "error": "Invalid cable or direction"}), 400
+
+        hex6      = _DIR_TO_HEX[direction]
+        new_fill  = PatternFill(start_color=hex6, end_color=hex6, fill_type="solid")
+        css_color = f"#{hex6}"
+
+        colored_path = Path(_JOBS[job_id]["job_dir"]) / "output" / "Colored_Connections_Table.xlsx"
+        if not colored_path.exists():
+            return jsonify({"ok": False, "error": "Connections table not found"}), 404
+
+        wb = openpyxl.load_workbook(str(colored_path))
+        ws = wb.active
+        changed = 0
+        for row in ws.iter_rows(min_row=2):
+            for cell in row[3:]:   # skip Location, Lat, Lon columns
+                if str(cell.value or "").strip() == cable:
+                    cell.fill = new_fill
+                    changed  += 1
+        wb.save(str(colored_path))
+
+        return jsonify({"ok": True, "changed": changed,
+                        "color": css_color, "direction": _DIR_LABELS[direction]})
 
     # -----------------------------------------------------------------------
     # Completion page
