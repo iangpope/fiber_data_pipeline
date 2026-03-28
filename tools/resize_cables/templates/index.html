@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cable Resize Tool</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="page-wrap">
+
+    <header class="site-header">
+      <div class="header-inner">
+        <span class="logo">⚡</span>
+        <div>
+          <h1>Cable Resize Tool</h1>
+          <p class="subtitle">Fiber Data Pipeline — Post-Processing</p>
+        </div>
+      </div>
+    </header>
+
+    <main class="upload-card">
+      <h2>Upload Completed Workbook</h2>
+      <p class="hint">Upload <code>Asbuilt_Workbook_post12.xlsx</code> (or any finalized
+        asbuilt workbook) to review and adjust cable sizes.</p>
+
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="flash-errors">
+            {% for msg in messages %}
+              <p class="flash-msg">⚠ {{ msg }}</p>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      <form method="POST" action="/review" enctype="multipart/form-data" class="upload-form">
+        <label class="drop-zone" id="dropZone">
+          <input type="file" name="workbook" id="fileInput" accept=".xlsx" required hidden />
+          <div class="drop-inner" id="dropInner">
+            <span class="drop-icon">📂</span>
+            <span class="drop-label">Click to select or drag & drop</span>
+            <span class="drop-hint">.xlsx files only</span>
+          </div>
+        </label>
+
+        <button type="submit" class="btn-primary" id="submitBtn" disabled>
+          Scan Workbook →
+        </button>
+      </form>
+
+      <div class="info-grid">
+        <div class="info-card">
+          <span class="info-icon">📋</span>
+          <strong>What it does</strong>
+          <p>Scans every sheath block and shows the current cable count (12–144 CT) for each one.</p>
+        </div>
+        <div class="info-card">
+          <span class="info-icon">🔧</span>
+          <strong>Make Changes</strong>
+          <p>Select a new cable size from the dropdown on any row. Unused sizes stay unchanged.</p>
+        </div>
+        <div class="info-card">
+          <span class="info-icon">⬇</span>
+          <strong>Download</strong>
+          <p>Get the resized workbook instantly — rows are added or removed with correct TIA-598 colors.</p>
+        </div>
+      </div>
+    </main>
+
+  </div>
+
+  <script>
+    const input    = document.getElementById("fileInput");
+    const dropZone = document.getElementById("dropZone");
+    const dropInner = document.getElementById("dropInner");
+    const submitBtn = document.getElementById("submitBtn");
+
+    function updateLabel(name) {
+      dropInner.innerHTML = `
+        <span class="drop-icon">✅</span>
+        <span class="drop-label">${name}</span>
+        <span class="drop-hint">Ready to scan</span>`;
+      submitBtn.disabled = false;
+      dropZone.classList.add("has-file");
+    }
+
+    input.addEventListener("change", () => {
+      if (input.files.length) updateLabel(input.files[0].name);
+    });
+
+    dropZone.addEventListener("dragover", e => { e.preventDefault(); dropZone.classList.add("drag-over"); });
+    dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
+    dropZone.addEventListener("drop", e => {
+      e.preventDefault();
+      dropZone.classList.remove("drag-over");
+      const file = e.dataTransfer.files[0];
+      if (file && file.name.endsWith(".xlsx")) {
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+        updateLabel(file.name);
+      }
+    });
+  </script>
+</body>
+</html>

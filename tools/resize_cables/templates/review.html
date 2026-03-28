@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Review Cables — Cable Resize Tool</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="page-wrap">
+
+    <header class="site-header">
+      <div class="header-inner">
+        <a href="/" class="back-btn">← Back</a>
+        <span class="logo">⚡</span>
+        <div>
+          <h1>Review Cable Sizes</h1>
+          <p class="subtitle">{{ filename }}</p>
+        </div>
+      </div>
+    </header>
+
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <div class="flash-errors page-flash">
+          {% for msg in messages %}
+            <p class="flash-msg">⚠ {{ msg }}</p>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <!-- Summary bar -->
+    <div class="summary-bar">
+      <span id="changedCount">0</span> change(s) pending
+      <span class="sep">|</span>
+      <span>{{ by_sheet|length }} sheet(s)</span>
+      <span class="sep">|</span>
+      <span>{{ by_sheet.values()|sum(attribute='__len__') }} sheath(s)</span>
+    </div>
+
+    <form method="POST" action="/apply">
+      <div class="sheet-list">
+        {% for sheet_name, records in by_sheet.items() %}
+        <details class="sheet-section" open>
+          <summary class="sheet-summary">
+            <span class="sheet-name">{{ sheet_name }}</span>
+            <span class="sheet-count">{{ records|length }} sheath(s)</span>
+          </summary>
+
+          <table class="cable-table">
+            <thead>
+              <tr>
+                <th>Sheath Name</th>
+                <th class="center">Current</th>
+                <th class="center">New Size</th>
+                <th class="center">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for rec in records %}
+              <tr class="cable-row" id="row-{{ loop.index0 }}">
+                <td class="sheath-name">{{ rec.sheath_name or rec.sheath_uuid }}</td>
+                <td class="center ct-badge">
+                  {% if rec.current_ct %}
+                    <span class="ct-pill ct-{{ rec.current_ct }}">{{ rec.current_ct }} CT</span>
+                  {% else %}
+                    <span class="ct-pill ct-unknown">?</span>
+                  {% endif %}
+                </td>
+                <td class="center">
+                  <select name="resize_{{ rec.sheath_uuid }}"
+                          class="ct-select"
+                          data-original="{{ rec.current_ct or '' }}"
+                          data-uuid="{{ rec.sheath_uuid }}"
+                          {% if rec.has_live %}data-has-live="true"{% endif %}>
+                    <option value="">— no change —</option>
+                    {% for ct in ct_sizes %}
+                    <option value="{{ ct }}"
+                      {% if ct == rec.current_ct %}selected{% endif %}>
+                      {{ ct }} CT
+                    </option>
+                    {% endfor %}
+                  </select>
+                </td>
+                <td class="center status-cell" id="status-{{ rec.sheath_uuid }}">
+                  {% if rec.has_live %}
+                    <span class="status-badge live" title="Contains live splice connections — cannot shrink below current CT">
+                      ⚡ Live splice
+                    </span>
+                  {% else %}
+                    <span class="status-badge ok">✓ OK</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
+        {% endfor %}
+      </div>
+
+      <div class="action-bar">
+        <a href="/" class="btn-secondary">← Upload Different File</a>
+        <button type="submit" class="btn-primary" id="applyBtn">
+          ⬇ Download Resized Workbook
+        </button>
+      </div>
+    </form>
+
+  </div>
+
+  <script>
+    // Track changes and warn if trying to shrink a live-splice sheath.
+    const selects = document.querySelectorAll(".ct-select");
+    const changedCount = document.getElementById("changedCount");
+
+    function updateCount() {
+      let n = 0;
+      selects.forEach(sel => {
+        const orig = sel.dataset.original;
+        const val  = sel.value;
+        if (val && val !== orig) n++;
+      });
+      changedCount.textContent = n;
+    }
+
+    selects.forEach(sel => {
+      sel.addEventListener("change", () => {
+        const orig    = parseInt(sel.dataset.original || "0", 10);
+        const newVal  = parseInt(sel.value || "0", 10);
+        const hasLive = sel.dataset.hasLive === "true";
+        const statusEl = document.getElementById("status-" + sel.dataset.uuid);
+
+        sel.classList.remove("changed", "warn");
+
+        if (sel.value && sel.value !== sel.dataset.original) {
+          sel.classList.add("changed");
+
+          if (hasLive && newVal < orig && newVal > 0) {
+            sel.classList.add("warn");
+            if (statusEl) statusEl.innerHTML =
+              '<span class="status-badge error">⚠ Blocked — live splices</span>';
+          } else {
+            const dir = newVal > orig ? "expand" : (newVal < orig ? "shrink" : "");
+            if (statusEl && dir) statusEl.innerHTML =
+              `<span class="status-badge pending">${dir === "expand" ? "↑" : "↓"} ${dir}</span>`;
+          }
+        } else {
+          if (statusEl) {
+            if (hasLive) {
+              statusEl.innerHTML = '<span class="status-badge live" title="Contains live splice connections">⚡ Live splice</span>';
+            } else {
+              statusEl.innerHTML = '<span class="status-badge ok">✓ OK</span>';
+            }
+          }
+        }
+        updateCount();
+      });
+    });
+  </script>
+</body>
+</html>

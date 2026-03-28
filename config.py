@@ -99,8 +99,36 @@ EMPTY_FILL = PatternFill()  # represents "no fill" / clear cell background
 # ---------------------------------------------------------------------------
 CONN_RAW_FUSION     = "<- FUSION ->"      # raw Magellan: active fusion splice
 CONN_RAW_CONTINUOUS = "<- CONTINUOUS ->"  # raw Magellan: continuous pass-through
-CONN_FUSED          = "< --- >"           # normalized: connected / spliced fiber
+CONN_FUSED          = "<--->"             # normalized: connected / spliced fiber
 CONN_UNUSED         = "X"                 # unused fiber (same in raw and normalized)
+
+
+# ---------------------------------------------------------------------------
+# TIA-598 Fiber/Buffer Color Order
+#
+# Standard 12-color sequence used for both buffer tubes and individual fibers.
+# Position 1 (index 0) = Blue, Position 12 (index 11) = Aqua.
+# Used by the cable resize tool to generate correct color sequences when
+# adding rows for a larger cable count.
+# ---------------------------------------------------------------------------
+FIBER_COLORS = ["BL", "OR", "GR", "BR", "SL", "WH", "RD", "BK", "YE", "VI", "PI", "AQ"]
+
+# Map from cable count to list of (buffer_color, [fiber_colors]) tuples.
+# Each inner list entry represents one buffer tube and its 12 fibers.
+CT_BREAKDOWN: dict[int, list[tuple[str, list[str]]]] = {
+    12:  [("BL", FIBER_COLORS[:12])],
+    24:  [("BL", FIBER_COLORS[:12]), ("OR", FIBER_COLORS[:12])],
+    48:  [("BL", FIBER_COLORS[:12]), ("OR", FIBER_COLORS[:12]),
+          ("GR", FIBER_COLORS[:12]), ("BR", FIBER_COLORS[:12])],
+    96:  [("BL", FIBER_COLORS[:12]), ("OR", FIBER_COLORS[:12]),
+          ("GR", FIBER_COLORS[:12]), ("BR", FIBER_COLORS[:12]),
+          ("SL", FIBER_COLORS[:12]), ("WH", FIBER_COLORS[:12]),
+          ("RD", FIBER_COLORS[:12]), ("BK", FIBER_COLORS[:12])],
+    144: [(c, FIBER_COLORS[:12]) for c in FIBER_COLORS[:12]],
+}
+
+# Sorted list of all valid cable counts (for dropdown population).
+VALID_CT_SIZES = sorted(CT_BREAKDOWN.keys())   # [12, 24, 48, 96, 144]
 
 
 # ---------------------------------------------------------------------------
