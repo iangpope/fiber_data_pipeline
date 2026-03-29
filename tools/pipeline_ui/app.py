@@ -628,10 +628,27 @@ def create_app() -> Flask:
 
         new_cable = _rename_cable_size(cable, new_size)
         if new_cable == cable:
-            return jsonify({"ok": True, "old_cable": cable, "new_cable": cable, "changed": 0})
+            # Distinguish "already at this size" (ok, no-op) from
+            # "CT pattern not found in name" (actual failure).
+            already = bool(
+                re.search(r'_' + re.escape(new_size) + r'$', cable, re.IGNORECASE)
+                or re.match(r'^' + re.escape(new_size) + r'\b', cable, re.IGNORECASE)
+            )
+            if already:
+                return jsonify({"ok": True, "old_cable": cable, "new_cable": cable, "changed": 0})
+            return jsonify({
+                "ok": False,
+                "error": (
+                    f"Cannot resize '{cable}': no recognized CT count found in the cable name. "
+                    "Only cables with a trailing _NNCT suffix (e.g. _48CT) or leading NNCT "
+                    "prefix (legacy format) can be resized here."
+                ),
+            }), 400
 
         job_dir = Path(_JOBS[job_id]["job_dir"])
-        changed_total = 0
+        changed_total   = 0
+        cut_sheet_found = False   # tracks whether cut_sheet.xlsx existed
+        cut_sheet_changed = 0     # rename hits in cut_sheet.xlsx specifically
         for fpath in [
             job_dir / "data"   / "Connections_Table.xlsx",
             job_dir / "data"   / "cut_sheet.xlsx",
@@ -639,6 +656,8 @@ def create_app() -> Flask:
         ]:
             if not fpath.exists():
                 continue
+            if fpath.name == "cut_sheet.xlsx":
+                cut_sheet_found = True
             wb = openpyxl.load_workbook(str(fpath), keep_links=False)
             changed = 0
             for ws in wb.worksheets:
@@ -647,6 +666,8 @@ def create_app() -> Flask:
                         if str(cell.value or "").strip() == cable:
                             cell.value = new_cable
                             changed += 1
+            if fpath.name == "cut_sheet.xlsx":
+                cut_sheet_changed = changed
             # For the cut sheet, also adjust the per-sheath row count
             # to match the fiber count in the new CT suffix.
             row_adj = 0
@@ -684,6 +705,20 @@ def create_app() -> Flask:
                         }), 500
                     return jsonify({"ok": False, "error": str(save_err)}), 500
                 changed_total += changed
+
+        # Warn if the cut sheet existed but the cable name wasn't found there —
+        # this means the name in the connections table differs from the cut sheet,
+        # so the pipeline will colorize using an unmatched name.
+        if cut_sheet_found and cut_sheet_changed == 0 and changed_total > 0:
+            return jsonify({
+                "ok": False,
+                "error": (
+                    f"'{cable}' was found in the Connections Table but not in the "
+                    "cut sheet — the name may differ slightly between files. "
+                    "The rename was NOT applied to cut_sheet.xlsx. Do not continue "
+                    "the pipeline until this is resolved."
+                ),
+            }), 400
 
         return jsonify({"ok": True, "old_cable": cable, "new_cable": new_cable,
                         "changed": changed_total})

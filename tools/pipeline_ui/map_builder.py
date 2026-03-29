@@ -112,9 +112,22 @@ def _cable_short_name(cable_name: str, loc_name: str) -> str:
 
 
 def _cable_size(cable_name: str) -> str:
-    """Extract the fiber-count suffix from a cable name (e.g. '48CT')."""
-    m = re.search(r'(\d{2,3}CT)', cable_name, re.IGNORECASE)
-    return m.group(1).upper() if m else ''
+    """
+    Extract the fiber-count suffix from a cable name (e.g. '48CT').
+
+    Uses the same two patterns as _rename_cable_size in app.py so that
+    the size shown in the dropdown is only set when a resize can actually
+    succeed:
+      1. Trailing _NNCT  (e.g. RC73E_SE_001_TO_RC73E_FT_085_48CT)
+      2. Leading NNCT    (e.g. 48CT MICRC31D007 TO MICRC310043)
+    """
+    m = re.search(r'_(\d{2,3}CT)$', cable_name, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    m = re.match(r'^(\d{2,3}CT)\b', cable_name, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    return ''
 
 
 def _hex_from_fill(cell) -> Optional[str]:
