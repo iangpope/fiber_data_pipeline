@@ -88,14 +88,17 @@ def _hex_from_fill(cell) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# KMZ cable geometry parser — folder-based
+# KMZ geometry helpers
 #
-# Magellan KMZ exports organise fiber cables as:
-#   fiber/fiberCable/<GUID folder name = cable name>/<Placemark LineStrings>
+# Magellan KMZ structure:
+#   fiber/fiberCable/<cable name folder>/<Placemarks>   — named cables (2-pt straight lines)
+#   undergroundSupport/supportCable/<GUID folder>/<Placemarks>  — actual conduit routes
+#   aerialSupport/supportCable/<GUID folder>/<Placemarks>       — aerial cable routes
 #
-# A single cable can be split across many Placemarks (e.g. 24 segments for
-# one cable).  We collect ALL segments per cable so the map renders the
-# complete route rather than one fragment.
+# The fiberCable layer only stores start/end points (straight lines), while
+# supportCable stores the full detailed conduit path with many small segments.
+# Both are needed: supportCable fills the map with real routes;
+# fiberCable provides the named cable associations for directional coloring.
 # ---------------------------------------------------------------------------
 
 def _strip_ns(tag: str) -> str:
@@ -107,14 +110,35 @@ def _get_name(el) -> str:
     return (n.text or "").strip() if n is not None else ""
 
 
+def _collect_linestring_segments(folder) -> list[list[tuple[float, float]]]:
+    """Collect all LineString segments from all Placemarks in a folder."""
+    segments = []
+    for pm in folder:
+        if _strip_ns(pm.tag) != "Placemark":
+            continue
+        ls = next((c for c in pm.iter() if _strip_ns(c.tag) == "LineString"), None)
+        if ls is None:
+            continue
+        coords_el = next((c for c in ls.iter() if _strip_ns(c.tag) == "coordinates"), None)
+        if coords_el is None or not coords_el.text:
+            continue
+        points = []
+        for tok in coords_el.text.split():
+            parts = tok.split(",")
+            if len(parts) >= 2:
+                try:
+                    points.append((float(parts[1]), float(parts[0])))  # lat, lon
+                except ValueError:
+                    pass
+        if points:
+            segments.append(points)
+    return segments
+
+
 def _parse_kmz_cables(kmz_path: str) -> dict[str, list[list[tuple[float, float]]]]:
     """
-    Return {cable_name: [[seg1_points], [seg2_points], ...]} by walking the
-    fiber/fiberCable folder hierarchy in the KMZ.
-
-    Each inner list is one LineString segment expressed as (lat, lon) tuples.
-    Keeping segments separate (rather than concatenating) avoids drawing
-    spurious connecting lines when segments are not geographically ordered.
+    Return {cable_name: [[seg1_points], ...]} from fiber/fiberCable.
+    Cable names are the folder names (e.g. 'RC73E_SE_001_TO_RC73E_FT_071_48CT').
     """
     cable_segments: dict[str, list] = {}
 
@@ -124,7 +148,6 @@ def _parse_kmz_cables(kmz_path: str) -> dict[str, list[list[tuple[float, float]]
             return cable_segments
         root = ET.fromstring(kmz.read(kml_name))
 
-    # Locate the fiber/fiberCable folder (works regardless of KML namespace).
     fiber_cable_folder = None
     for folder in root.iter():
         if _strip_ns(folder.tag) == "Folder" and _get_name(folder) == "fiberCable":
@@ -134,39 +157,53 @@ def _parse_kmz_cables(kmz_path: str) -> dict[str, list[list[tuple[float, float]]
     if fiber_cable_folder is None:
         return cable_segments
 
-    # Each direct child Folder has the cable name; its Placemarks hold geometry.
     for guid_folder in fiber_cable_folder:
         if _strip_ns(guid_folder.tag) != "Folder":
             continue
         cable_name = _get_name(guid_folder)
         if not cable_name:
             continue
-
-        segments = []
-        for pm in guid_folder:
-            if _strip_ns(pm.tag) != "Placemark":
-                continue
-            ls = next((c for c in pm.iter() if _strip_ns(c.tag) == "LineString"), None)
-            if ls is None:
-                continue
-            coords_el = next((c for c in ls.iter() if _strip_ns(c.tag) == "coordinates"), None)
-            if coords_el is None or not coords_el.text:
-                continue
-            points = []
-            for tok in coords_el.text.split():
-                parts = tok.split(",")
-                if len(parts) >= 2:
-                    try:
-                        points.append((float(parts[1]), float(parts[0])))  # lat, lon
-                    except ValueError:
-                        pass
-            if points:
-                segments.append(points)
-
+        segments = _collect_linestring_segments(guid_folder)
         if segments:
             cable_segments[cable_name] = segments
 
     return cable_segments
+
+
+def _parse_kmz_infrastructure(kmz_path: str) -> list[list[tuple[float, float]]]:
+    """
+    Return all LineString segments from undergroundSupport/supportCable and
+    aerialSupport/supportCable as a flat list of segments.
+
+    These segments form the actual physical conduit routes that match what
+    Google Earth renders — far denser than the straight-line fiberCable layer.
+    """
+    all_segments: list = []
+
+    with zipfile.ZipFile(kmz_path, "r") as kmz:
+        kml_name = next((n for n in kmz.namelist() if n.endswith(".kml")), None)
+        if not kml_name:
+            return all_segments
+        root = ET.fromstring(kmz.read(kml_name))
+
+    doc = next((c for c in root if _strip_ns(c.tag) == "Document"), root)
+
+    for top_folder in doc:
+        if _strip_ns(top_folder.tag) != "Folder":
+            continue
+        top_name = _get_name(top_folder)
+        if top_name not in ("undergroundSupport", "aerialSupport"):
+            continue
+        for sub in top_folder:
+            if _strip_ns(sub.tag) != "Folder" or _get_name(sub) != "supportCable":
+                continue
+            # Each child is a GUID folder containing Placemarks
+            for guid_folder in sub:
+                if _strip_ns(guid_folder.tag) != "Folder":
+                    continue
+                all_segments.extend(_collect_linestring_segments(guid_folder))
+
+    return all_segments
 
 
 # ---------------------------------------------------------------------------
@@ -263,14 +300,27 @@ def build_geojson(job_dir: str) -> dict:
         location_data[loc] = {"lat": lat, "lon": lon, "cables": cables}
 
     # -----------------------------------------------------------------------
-    # 3. Parse KMZ cable geometries (all segments per cable).
+    # 3. Parse KMZ geometries.
     # -----------------------------------------------------------------------
     kmz_cables = _parse_kmz_cables(kmz_path) if kmz_path else {}
+    infra_segments = _parse_kmz_infrastructure(kmz_path) if kmz_path else []
 
     # -----------------------------------------------------------------------
     # 4. Build GeoJSON features.
     # -----------------------------------------------------------------------
     features = []
+
+    # --- Infrastructure background lines (conduit routes from supportCable) ---
+    # Grouped into one MultiLineString feature to keep the GeoJSON compact.
+    if infra_segments:
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "MultiLineString",
+                "coordinates": [[[lon, lat] for lat, lon in seg] for seg in infra_segments],
+            },
+            "properties": {"layer": "infrastructure"},
+        })
 
     # --- Cable MultiLineString features ---
     # Color is stored in properties for node-click highlighting and override

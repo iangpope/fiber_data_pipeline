@@ -611,10 +611,20 @@
           statusEl.textContent = "No map data available — check step 1/2 output"; return;
         }
 
-        const cables = features.filter(f => f.geometry.type === "MultiLineString");
+        const infra  = features.filter(f => f.properties.layer === "infrastructure");
+        const cables = features.filter(f => f.geometry.type === "MultiLineString" && f.properties.layer !== "infrastructure");
         const points = features.filter(f => f.geometry.type === "Point");
 
-        // Draw cable lines (gray; color shows on node expand)
+        // Draw infrastructure conduit routes as dim background
+        infra.forEach(f => {
+          f.geometry.coordinates.forEach(seg => {
+            L.polyline(seg.map(c => [c[1], c[0]]), {
+              color: "#4a5568", weight: 1.2, opacity: 0.45, interactive: false,
+            }).addTo(layerLines);
+          });
+        });
+
+        // Draw named cable lines (gray; color shows on node expand)
         cables.forEach(f => {
           const p = f.properties;
           const uncertain = p.confidence === "diagonal" || p.confidence === "short";
