@@ -540,7 +540,26 @@
           if (willOpen) {
             highlightCables(p.cables);
             activateMarker(p.name);
-            if (panMap) map.panTo(latlng, { animate: true, duration: 0.4 });
+            if (panMap) {
+              // Fit map to show the location marker + all its cable geometries
+              const pts = [latlng];
+              p.cables.forEach(c => {
+                const layer = cableLayerMap[c.name];
+                if (!layer) return;
+                try {
+                  const b = layer.getBounds();
+                  if (b.isValid()) {
+                    pts.push([b.getSouth(), b.getWest()]);
+                    pts.push([b.getNorth(), b.getEast()]);
+                  }
+                } catch(e) {}
+              });
+              if (pts.length > 1) {
+                map.fitBounds(L.latLngBounds(pts).pad(0.18), { animate: true, maxZoom: 18 });
+              } else {
+                map.setView(latlng, 17, { animate: true });
+              }
+            }
             // Scroll the accordion panel to this row
             setTimeout(() => item.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
           } else {
@@ -551,8 +570,9 @@
         hdr.addEventListener("click", () => openLocation(true));
 
         // Clicking the map marker opens this location in the accordion
+        // (panMap=true so cables are fitted into view from the marker too)
         const m = locationMarkers[p.name];
-        if (m) m.on("click", () => openLocation(false));
+        if (m) m.on("click", () => openLocation(true));
 
         item.appendChild(hdr);
         item.appendChild(section);

@@ -251,21 +251,30 @@ def build_geojson(job_dir: str) -> dict:
 
     # -----------------------------------------------------------------------
     # 1. Read cable → color from the Colored Connections Table.
+    #
+    # The same cable name can appear at multiple locations with DIFFERENT
+    # colors (step 2 assigns direction relative to each location; the
+    # deduplication pass may also shift a color at one location vs another).
+    # Build both a per-location lookup AND a global fallback.
     # -----------------------------------------------------------------------
-    cable_info: dict[str, dict] = {}   # cable_name → {label, css}
+    cable_info: dict[str, dict] = {}            # cable_name → {label, css}  (global, last-seen)
+    loc_cable_info: dict[str, dict] = {}        # location_name → {cable_name → {label, css}}
 
     wb_colored = openpyxl.load_workbook(colored_table_path)
     ws = wb_colored.active
 
     max_col = ws.max_column
     for row in ws.iter_rows(min_row=2, max_col=max_col):
+        loc_val = str(row[0].value or "").strip()   # column A = Location
         for cell in row[3:]:   # skip Location, Lat, Lon columns
             val = str(cell.value or "").strip()
             if not val:
                 continue
             hex6 = _hex_from_fill(cell)
             info = _FILL_TO_INFO.get(hex6, _DEFAULT_COLOR) if hex6 else _DEFAULT_COLOR
-            cable_info[val] = info
+            cable_info[val] = info          # global (last-seen wins; used for cable line features)
+            if loc_val:
+                loc_cable_info.setdefault(loc_val, {})[val] = info
 
     # -----------------------------------------------------------------------
     # 2. Read location nodes from Connections Table.
@@ -284,11 +293,15 @@ def build_geojson(job_dir: str) -> dict:
             continue
 
         cables = []
+        loc_colors = loc_cable_info.get(str(loc), {})
         for col in df.columns:
             if str(col).startswith("Connection"):
                 val = str(row.get(col, "")).strip()
                 if val and val.lower() not in ("nan", "none", ""):
-                    info = cable_info.get(val, _DEFAULT_COLOR)
+                    # Prefer the color from this location's own row in the Excel
+                    # (direction is relative per-location; global cable_info can
+                    # be wrong because a later location's row may overwrite it).
+                    info = loc_colors.get(val) or cable_info.get(val, _DEFAULT_COLOR)
                     cables.append({
                         "name":       val,
                         "color":      info["css"],
