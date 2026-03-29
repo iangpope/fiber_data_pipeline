@@ -177,10 +177,56 @@ def _collect_linestring_segments(folder) -> list[list[tuple[float, float]]]:
     return segments
 
 
+def _merge_segments(segments: list[list[tuple[float, float]]]) -> list[list[tuple[float, float]]]:
+    """
+    Chain a list of LineString segments end-to-end where endpoints match.
+
+    Magellan exports some cables as multiple GUID folders with the same cable
+    name (e.g. one folder per conduit section). Collecting all their segments
+    and chaining them gives the complete cable route. Segments that cannot be
+    geometrically joined are kept as-is to avoid data loss.
+    """
+    from collections import deque
+    if len(segments) <= 1:
+        return segments
+
+    chain = deque(segments[0])
+    remaining = list(segments[1:])
+
+    while remaining:
+        progress = False
+        still = []
+        SNAP = 0.000005  # ~0.5 m tolerance for join detection
+        for seg in remaining:
+            def close(a, b):
+                return abs(a[0]-b[0]) < SNAP and abs(a[1]-b[1]) < SNAP
+            if close(chain[-1], seg[0]):
+                chain.extend(seg[1:]);  progress = True
+            elif close(chain[-1], seg[-1]):
+                chain.extend(reversed(seg[:-1]));  progress = True
+            elif close(chain[0], seg[-1]):
+                chain.extendleft(reversed(seg[:-1]));  progress = True
+            elif close(chain[0], seg[0]):
+                chain.extendleft(seg[1:]);  progress = True
+            else:
+                still.append(seg)
+        if not progress:
+            for seg in still:
+                chain.extend(seg)
+            break
+        remaining = still
+
+    return [list(chain)]
+
+
 def _parse_kmz_cables(kmz_path: str) -> dict[str, list[list[tuple[float, float]]]]:
     """
     Return {cable_name: [[seg1_points], ...]} from fiber/fiberCable.
-    Cable names are the folder names (e.g. 'RC73E_SE_001_TO_RC73E_FT_071_48CT').
+
+    A cable may be split across multiple GUID sub-folders with the same name
+    (Magellan splits cables at conduit-section boundaries). All segments for
+    a cable are accumulated and chained into a single continuous polyline so
+    the rendered line spans both splice endpoints correctly.
     """
     cable_segments: dict[str, list] = {}
 
@@ -206,8 +252,11 @@ def _parse_kmz_cables(kmz_path: str) -> dict[str, list[list[tuple[float, float]]
         if not cable_name:
             continue
         segments = _collect_linestring_segments(guid_folder)
-        if segments:
-            cable_segments[cable_name] = segments
+        if not segments:
+            continue
+        # Accumulate — do NOT overwrite; same-named folders are cable sections
+        existing = cable_segments.get(cable_name, [])
+        cable_segments[cable_name] = _merge_segments(existing + segments)
 
     return cable_segments
 
@@ -355,24 +404,10 @@ def build_geojson(job_dir: str) -> dict:
         location_data[loc] = {"lat": lat, "lon": lon, "cables": cables}
 
     # -----------------------------------------------------------------------
-    # 3. Parse KMZ geometries and snap cable endpoints to CT coordinates.
+    # 3. Parse KMZ geometries.
     # -----------------------------------------------------------------------
     kmz_cables = _parse_kmz_cables(kmz_path) if kmz_path else {}
     infra_segments = _parse_kmz_infrastructure(kmz_path) if kmz_path else []
-
-    # Build a flat lat/lon lookup from location_data for snapping
-    loc_coords = {name: (d["lat"], d["lon"]) for name, d in location_data.items()}
-
-    # Snap each named cable's start/end to CT coordinates so cable lines
-    # visually connect the location markers they reference in their name.
-    for cable_name, segs in list(kmz_cables.items()):
-        a_end, b_end = _parse_cable_endpoints(cable_name)
-        if not a_end or not b_end:
-            continue
-        a_coord = loc_coords.get(a_end)
-        b_coord = loc_coords.get(b_end)
-        if a_coord and b_coord:
-            kmz_cables[cable_name] = _snap_cable_segments(segs, a_coord, b_coord)
 
     # -----------------------------------------------------------------------
     # 4. Build GeoJSON features.
