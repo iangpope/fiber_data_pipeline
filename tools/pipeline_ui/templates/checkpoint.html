@@ -328,11 +328,50 @@
       });
     }
 
+    function makeActiveIcon(locName, baseColor) {
+      // Larger pulsing circle + name label to the right
+      const label = locName.length > 18 ? locName.slice(0, 17) + "…" : locName;
+      return L.divIcon({
+        html: `<div style="position:relative;width:0;height:0">
+          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22"
+               style="position:absolute;left:-11px;top:-11px;filter:drop-shadow(0 0 5px ${baseColor})">
+            <circle cx="11" cy="11" r="9" fill="${baseColor}" stroke="#fff" stroke-width="2.5"/>
+            <circle cx="11" cy="11" r="5" fill="rgba(255,255,255,0.35)"/>
+          </svg>
+          <span style="position:absolute;left:14px;top:-9px;white-space:nowrap;
+                       background:rgba(10,12,20,0.88);color:#f0f4ff;
+                       font-size:10px;font-family:'Inter',sans-serif;font-weight:600;
+                       padding:2px 6px;border-radius:4px;
+                       border:1px solid rgba(255,255,255,0.15);
+                       pointer-events:none">${label}</span>
+        </div>`,
+        className: "", iconSize:[0,0], iconAnchor:[0,0], popupAnchor:[11,-11],
+      });
+    }
+
     const layerLines  = L.featureGroup().addTo(map);
     const layerPoints = L.featureGroup().addTo(map);
-    const cableLayerMap = {};
-    const cableProps    = {};
+    const cableLayerMap   = {};
+    const cableProps      = {};
     const locationLatLngs = {};
+    const locationMarkers = {};   // name → L.marker
+    const locationBaseColors = {}; // name → default icon color
+
+    let activeLocName = null;
+
+    function activateMarker(name) {
+      if (activeLocName && activeLocName !== name) deactivateMarker();
+      activeLocName = name;
+      const m = locationMarkers[name];
+      if (m) m.setIcon(makeActiveIcon(name, "#f0c040"));
+    }
+
+    function deactivateMarker() {
+      if (!activeLocName) return;
+      const m = locationMarkers[activeLocName];
+      if (m) m.setIcon(makeIcon(locationBaseColors[activeLocName] || "#4f8ef7"));
+      activeLocName = null;
+    }
 
     // ── Highlights ────────────────────────────────────────────────────────────
     let activeHighlights    = [];
@@ -344,6 +383,7 @@
       );
       activeHighlights = [];
       activeLocationCables = null;
+      deactivateMarker();
     }
 
     function highlightCables(cableList) {
@@ -474,6 +514,7 @@
           section.style.display = open ? "block" : "none";
           if (open) {
             highlightCables(p.cables);
+            activateMarker(p.name);
             map.panTo(latlng, { animate: true, duration: 0.4 });
           } else {
             clearHighlights();
@@ -605,9 +646,10 @@
              </div>`).join("");
           const missingHtml = hasMissing
             ? `<div style="color:#ef4444;font-size:0.72rem;margin-top:6px">✕ No KMZ: ${p.missing_cables.join(", ")}</div>` : "";
-          const marker = L.marker(latlng, {
-            icon: hasMissing ? makeIcon("#ef4444") : makeIcon("#4f8ef7"),
-          }).addTo(layerPoints);
+          const baseColor = hasMissing ? "#ef4444" : "#4f8ef7";
+          locationBaseColors[p.name] = baseColor;
+          const marker = L.marker(latlng, { icon: makeIcon(baseColor) }).addTo(layerPoints);
+          locationMarkers[p.name] = marker;
           marker.on("popupopen", () => highlightCables(p.cables));
           marker.bindPopup(
             `<div class="popup-title">${p.name}</div>${cablesHtml||'<span style="color:#666">No cables</span>'}${missingHtml}`,
