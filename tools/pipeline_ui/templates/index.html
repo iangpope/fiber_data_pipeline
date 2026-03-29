@@ -69,8 +69,8 @@
 
         <div class="upload-section secondary">
           <h2>Optional Files <span class="badge">Step 10</span></h2>
-          <p class="hint">Required to generate the Tap Report. If omitted, pipeline runs steps 1–9 only.</p>
-          <div class="upload-grid">
+          <p class="hint">Upload the HAF Report to generate the Tap Report (step 10). The Tap Report Template is read automatically from the data folder. If omitted, pipeline runs steps 1–9 only.</p>
+          <div class="upload-grid" style="grid-template-columns: 1fr;">
 
             <div class="upload-card">
               <label class="drop-zone optional" id="hafZone">
@@ -78,17 +78,6 @@
                 <div class="drop-inner" id="hafInner">
                   <span class="drop-icon">📋</span>
                   <span class="drop-label">HAF Report</span>
-                  <span class="drop-hint">Click or drag & drop — .xlsx (optional)</span>
-                </div>
-              </label>
-            </div>
-
-            <div class="upload-card">
-              <label class="drop-zone optional" id="templateZone">
-                <input type="file" name="tap_template" id="templateInput" accept=".xlsx" hidden />
-                <div class="drop-inner" id="templateInner">
-                  <span class="drop-icon">📄</span>
-                  <span class="drop-label">Tap Report Template</span>
                   <span class="drop-hint">Click or drag & drop — .xlsx (optional)</span>
                 </div>
               </label>
@@ -153,10 +142,9 @@
       });
     }
 
-    setupDrop("kmzZone",      "kmzInner",      "kmzInput",      "🗺️", "KMZ Network Export",      false);
-    setupDrop("sheetZone",    "sheetInner",    "sheetInput",    "📊", "Splice Cut Sheet",         false);
-    setupDrop("hafZone",      "hafInner",      "hafInput",      "📋", "HAF Report",               true);
-    setupDrop("templateZone", "templateInner", "templateInput", "📄", "Tap Report Template",      true);
+    setupDrop("kmzZone",   "kmzInner",   "kmzInput",   "🗺️", "KMZ Network Export", false);
+    setupDrop("sheetZone", "sheetInner", "sheetInput", "📊", "Splice Cut Sheet",    false);
+    setupDrop("hafZone",   "hafInner",   "hafInput",   "📋", "HAF Report",          true);
 
     function checkReady() {
       const kmzOk   = document.getElementById("kmzInput").files.length > 0;

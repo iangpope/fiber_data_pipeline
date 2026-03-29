@@ -150,12 +150,9 @@ def create_app() -> Flask:
         sheet_file.save(data_dir / sheet_file.filename)
 
         # Save optional files.
-        haf_file      = request.files.get("haf")
-        template_file = request.files.get("tap_template")
+        haf_file = request.files.get("haf")
         if haf_file and haf_file.filename:
             haf_file.save(data_dir / haf_file.filename)
-        if template_file and template_file.filename:
-            template_file.save(data_dir / template_file.filename)
 
         # Register job.
         _JOBS[job_id] = {
