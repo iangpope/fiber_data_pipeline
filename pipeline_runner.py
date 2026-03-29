@@ -31,6 +31,7 @@ from __future__ import annotations
 import io
 import os
 import sys
+import traceback
 import contextlib
 from pathlib import Path
 from typing import Callable, Optional
@@ -106,12 +107,14 @@ def _capture_and_relay(
         return
 
     buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        func()
-
-    output = buf.getvalue()
-    for line in output.splitlines():
-        log_callback(step_num, line)
+    try:
+        with contextlib.redirect_stdout(buf):
+            func()
+    finally:
+        # Relay whatever was printed before the exception (or everything on success)
+        output = buf.getvalue()
+        for line in output.splitlines():
+            log_callback(step_num, line)
 
 
 # ---------------------------------------------------------------------------
@@ -188,15 +191,18 @@ def run_pipeline(
             _capture_and_relay(_run, step_num, log_callback)
 
         except Exception as exc:
-            msg = f"Step {step_num} ({module_name}) failed: {exc}"
+            tb   = traceback.format_exc()
+            msg  = f"Step {step_num} ({module_name}) failed: {exc or type(exc).__name__}"
             if log_callback:
                 log_callback(step_num, f"ERROR: {msg}")
+                for line in tb.splitlines():
+                    log_callback(step_num, line)
             else:
-                print(f"\n{msg}", file=sys.stderr)
+                print(f"\n{msg}\n{tb}", file=sys.stderr)
             return {
                 "status":      "failed",
                 "failed_step": step_num,
-                "error":       msg,
+                "error":       f"{msg}\n{tb}",
             }
 
         # After step 2, invoke the checkpoint callback if we are not stopping here.

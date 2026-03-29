@@ -19,6 +19,7 @@ import sys
 import tempfile
 import threading
 import uuid
+import zipfile
 from pathlib import Path
 
 import re
@@ -43,6 +44,38 @@ from config import FIBER_COLORS as _TIA_COLORS
 
 import pipeline_runner
 from map_builder import build_geojson
+
+
+def _safe_save_workbook(wb, fpath: Path) -> None:
+    """
+    Save `wb` to `fpath` safely:
+      1. Serialize to BytesIO so any openpyxl exception is raised before
+         touching the on-disk file.
+      2. Validate the BytesIO result by decompressing every ZIP entry
+         (catches truncated XML that would fail at load time).
+      3. Write atomically via a sibling .tmp file then rename.
+
+    Raises RuntimeError if the serialized bytes fail validation.
+    """
+    buf = io.BytesIO()
+    wb.save(buf)
+    data = buf.getvalue()
+
+    # Decompress every entry in the ZIP to catch truncated XML.
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as _zf:
+            for _name in _zf.namelist():
+                _zf.read(_name)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Workbook serialization produced an unreadable file for "
+            f"{fpath.name}: {exc}"
+        ) from exc
+
+    # Atomic write: write to .tmp, then rename over the target.
+    tmp = fpath.with_suffix(".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(fpath)
 
 
 def _rename_cable_size(cable: str, new_size: str) -> str:
@@ -136,14 +169,66 @@ def _adjust_sheath_row_count(wb, cable: str, new_size: str) -> int:
             continue
 
         current_count = len(block_rows)
-        if current_count == target_count:
-            continue
-
-        last_row_idx = block_rows[-1]
-        max_col      = ws.max_column
+        last_row_idx  = block_rows[-1]
+        max_col       = ws.max_column
 
         # All rows in a sheath block share the same UUID — read from the first row
         sheath_uuid = ws.cell(block_rows[0], 1).value
+
+        if current_count == target_count:
+            # No row count change, but check for residual X rows left over from a prior
+            # resize where the right-side cable was smaller than it is now.
+            # Read the right-side cable from the LAST connected row so multi-partner
+            # blocks (e.g. South: MST rows 1-12, West rows 13-48, East rows 49-96)
+            # use the most-recent partner for the tail section.
+            r_cable_refresh     = None
+            r_uuid_refresh      = None
+            r_enc_end_refresh   = None
+            r_enc_start_refresh = None
+            conn_sym_refresh    = "<- FUSION ->"
+            for br in reversed(block_rows):
+                rv = ws.cell(br, r_sheath_col).value
+                if rv and str(rv).strip():
+                    r_cable_refresh = str(rv).strip()
+                    r_uuid_refresh  = ws.cell(br, r_uuid_col).value
+                    break
+            if r_cable_refresh is None:
+                continue
+            rm = re.search(r'_(\d+)CT\b', r_cable_refresh, re.IGNORECASE)
+            if not rm:
+                rm = re.match(r'^(\d+)CT\b', r_cable_refresh, re.IGNORECASE)
+            r_ct_refresh = int(rm.group(1)) if rm else 0
+            if r_ct_refresh == 0:
+                continue
+            for br in block_rows:
+                v = str(ws.cell(br, conn_col).value or "").strip()
+                if v and v != "X":
+                    conn_sym_refresh = v
+                    break
+            for br in reversed(block_rows):
+                v = ws.cell(br, r_end_enc_col).value
+                if v is not None:
+                    r_enc_end_refresh   = v
+                    r_enc_start_refresh = ws.cell(br, r_start_enc_col).value
+                    break
+            for pos_idx, br in enumerate(block_rows):
+                if pos_idx + 1 > r_ct_refresh:
+                    break
+                cv    = str(ws.cell(br, conn_col).value or "").strip()
+                rname = ws.cell(br, r_sheath_col).value
+                if cv != "X" or rname is not None:
+                    continue
+                buf_c = str(ws.cell(br, buffer_col).value or "").strip()
+                fib_c = str(ws.cell(br, fiber_col).value  or "").strip()
+                ws.cell(br, conn_col).value         = conn_sym_refresh
+                ws.cell(br, r_fiber_col).value      = fib_c
+                ws.cell(br, r_buffer_col).value     = buf_c
+                ws.cell(br, r_end_enc_col).value    = r_enc_end_refresh
+                ws.cell(br, r_start_enc_col).value  = r_enc_start_refresh
+                ws.cell(br, r_sheath_col).value     = r_cable_refresh
+                ws.cell(br, r_uuid_col).value       = r_uuid_refresh
+                rows_changed += 1
+            continue
 
         if current_count < target_count:
             add_count = target_count - current_count
@@ -159,10 +244,12 @@ def _adjust_sheath_row_count(wb, cable: str, new_size: str) -> int:
                     break
 
             # Determine how many fibers the right-side cable can accept.
-            # Parse the CT count from the right-side SHEATH NAME (col O).
+            # Read from the LAST connected row so that multi-partner blocks use the
+            # most-recent right-side cable (e.g. in a South block that transitions
+            # MST → West → East, new rows appended at the East tail connect to East).
             r_cable_name      = None
             r_sheath_uuid_val = None
-            for br in block_rows:
+            for br in reversed(block_rows):
                 rv = ws.cell(br, r_sheath_col).value
                 if rv and str(rv).strip():
                     r_cable_name      = str(rv).strip()
@@ -208,7 +295,18 @@ def _adjust_sheath_row_count(wb, cable: str, new_size: str) -> int:
                 fib_idx = 0
                 buf_idx += 1
 
-            ws.insert_rows(last_row_idx + 1, amount=add_count)
+            # Shift existing rows downward manually instead of using ws.insert_rows().
+            # openpyxl's insert_rows rewrites internal XML references (merged cells,
+            # conditional formatting, named ranges) which corrupts complex Magellan
+            # workbooks when saved.  Copying values cell-by-cell avoids that entirely.
+            _ceil = ws.max_row
+            for _r in range(_ceil, last_row_idx, -1):
+                for _c in range(1, max_col + 1):
+                    ws.cell(_r + add_count, _c).value = ws.cell(_r, _c).value
+            for _r in range(last_row_idx + 1, last_row_idx + add_count + 1):
+                for _c in range(1, max_col + 1):
+                    ws.cell(_r, _c).value = None
+
             for i in range(add_count):
                 new_r          = last_row_idx + 1 + i
                 fiber_position = current_count + i + 1   # 1-based position in block
@@ -246,140 +344,11 @@ def _adjust_sheath_row_count(wb, cable: str, new_size: str) -> int:
 
             rows_changed += add_count
 
-            # ── Reverse reconciliation ────────────────────────────────────────
-            # If r_cable_name was resized BEFORE the current cable, its rows at
-            # positions > current_count already have X / blank right side because
-            # the current cable was still small at that time.  Now that the current
-            # cable has grown, retroactively establish those connections.
-            if r_cable_name:
-                # Search the full sheet (row indices may have shifted after insert)
-                rev_block = [
-                    r for r in range(hdr_row + 1, ws.max_row + 1)
-                    if isinstance(ws.cell(r, sheath_col).value, str)
-                    and ws.cell(r, sheath_col).value.strip() == r_cable_name
-                ]
-                if len(rev_block) > current_count:
-                    # Pull right-side enclosure values from r_cable_name's connected rows
-                    rev_r_end_enc   = None
-                    rev_r_start_enc = None
-                    for rr in rev_block[:current_count]:
-                        v = ws.cell(rr, r_end_enc_col).value
-                        if v is not None:
-                            rev_r_end_enc   = v
-                            rev_r_start_enc = ws.cell(rr, r_start_enc_col).value
-                            break
-
-                    for pos_idx in range(current_count, min(target_count, len(rev_block))):
-                        rr         = rev_block[pos_idx]
-                        conn_val   = str(ws.cell(rr, conn_col).value or "").strip()
-                        right_name = ws.cell(rr, r_sheath_col).value
-                        # Only update rows that were previously written as X / no right side
-                        if conn_val != "X" or right_name is not None:
-                            continue
-                        buf_c = str(ws.cell(rr, buffer_col).value or "").strip()
-                        fib_c = str(ws.cell(rr, fiber_col).value  or "").strip()
-                        ws.cell(rr, conn_col).value         = conn_symbol
-                        ws.cell(rr, r_fiber_col).value      = fib_c
-                        ws.cell(rr, r_buffer_col).value     = buf_c
-                        ws.cell(rr, r_end_enc_col).value    = rev_r_end_enc
-                        ws.cell(rr, r_start_enc_col).value  = rev_r_start_enc
-                        ws.cell(rr, r_sheath_col).value     = cable
-                        ws.cell(rr, r_uuid_col).value       = sheath_uuid
-                        rows_changed += 1
-
         else:
             # Remove excess rows from the end of the block
             remove_count = current_count - target_count
             ws.delete_rows(last_row_idx - remove_count + 1, amount=remove_count)
             rows_changed += remove_count
-
-    # ── Cross-sheet reconciliation ──────────────────────────────────────────
-    # The main loop only processes sheets where `cable` appears on the LEFT side.
-    # If `cable` is on the RIGHT side of a sheet, a sibling left-cable may have
-    # X/blank rows (written when `cable` was smaller) that can now be connected.
-    # Example: Sheet has Cable_A (left) ↔ Cable_B (right).  When Cable_B grows,
-    # Cable_A's X rows on THIS sheet need to be healed — but the main loop skips
-    # this sheet entirely because Cable_B isn't a left cable here.
-    for ws in wb.worksheets:
-        hdr_row = None
-        for r in range(1, min(ws.max_row, 120) + 1):
-            for c in range(1, min(ws.max_column, 30) + 1):
-                v = ws.cell(r, c).value
-                if isinstance(v, str) and 'SHEATH UUID' in v.upper():
-                    hdr_row = r; break
-            if hdr_row:
-                break
-        if hdr_row is None:
-            continue
-
-        def _col_x(label, after=0, _hdr=hdr_row, _ws=ws):
-            for c in range(1, _ws.max_column + 1):
-                if c <= after: continue
-                v = _ws.cell(_hdr, c).value
-                if isinstance(v, str) and v.strip().upper() == label.upper():
-                    return c
-            return None
-
-        xcc  = _col_x('CONNECTION')                       or 10
-        xsc  = _col_x('SHEATH NAME')                      or 2
-        xbc  = _col_x('BUFFER')                           or 5
-        xfc  = _col_x('FIBER')                            or 6
-        xrfc = _col_x('FIBER',       after=xcc)           or 11
-        xrbc = _col_x('BUFFER',      after=xcc)           or 12
-        xrec = _col_x('END ENC',     after=xcc)           or 13
-        xrsc = _col_x('START ENC',   after=xcc)           or 14
-        xrnc = _col_x('SHEATH NAME', after=xcc)           or 15
-        xruc = _col_x('SHEATH UUID', after=xcc)           or 16
-
-        # Gather template info from each left-cable block that has `cable` on the right.
-        # Scan all matching rows so we pick up the first row with valid enc values.
-        paired = {}
-        for r in range(hdr_row + 1, ws.max_row + 1):
-            rv = ws.cell(r, xrnc).value
-            if not isinstance(rv, str) or rv.strip() != cable:
-                continue
-            lv = ws.cell(r, xsc).value
-            if not isinstance(lv, str) or not lv.strip():
-                continue
-            lname = lv.strip()
-            cv    = str(ws.cell(r, xcc).value or "").strip()
-            enc_v = ws.cell(r, xrec).value
-            if lname not in paired:
-                paired[lname] = {
-                    'conn_sym': cv if cv and cv != "X" else "<- FUSION ->",
-                    'r_end':   enc_v,
-                    'r_start': ws.cell(r, xrsc).value,
-                    'r_uuid':  ws.cell(r, xruc).value,
-                }
-            elif enc_v is not None and paired[lname]['r_end'] is None:
-                # Upgrade to a row that actually has enclosure values
-                paired[lname]['r_end']   = enc_v
-                paired[lname]['r_start'] = ws.cell(r, xrsc).value
-
-        # Heal X/blank rows in each paired left-cable block up to target_count.
-        for lname, tpl in paired.items():
-            lblock = [
-                r for r in range(hdr_row + 1, ws.max_row + 1)
-                if isinstance(ws.cell(r, xsc).value, str)
-                and ws.cell(r, xsc).value.strip() == lname
-            ]
-            for pos_idx, rr in enumerate(lblock):
-                if pos_idx >= target_count:
-                    break
-                cv    = str(ws.cell(rr, xcc).value or "").strip()
-                rname = ws.cell(rr, xrnc).value
-                if cv != "X" or rname is not None:
-                    continue
-                buf_c = str(ws.cell(rr, xbc).value or "").strip()
-                fib_c = str(ws.cell(rr, xfc).value or "").strip()
-                ws.cell(rr, xcc).value  = tpl['conn_sym']
-                ws.cell(rr, xrfc).value = fib_c
-                ws.cell(rr, xrbc).value = buf_c
-                ws.cell(rr, xrec).value = tpl['r_end']
-                ws.cell(rr, xrsc).value = tpl['r_start']
-                ws.cell(rr, xrnc).value = cable
-                ws.cell(rr, xruc).value = tpl['r_uuid']
-                rows_changed += 1
 
     return rows_changed
 
@@ -639,7 +608,7 @@ def create_app() -> Flask:
                 if str(cell.value or "").strip() == cable:
                     cell.fill = new_fill
                     changed  += 1
-        wb.save(str(colored_path))
+        _safe_save_workbook(wb, colored_path)
 
         return jsonify({"ok": True, "changed": changed,
                         "color": css_color, "direction": _DIR_LABELS[direction]})
@@ -670,7 +639,7 @@ def create_app() -> Flask:
         ]:
             if not fpath.exists():
                 continue
-            wb = openpyxl.load_workbook(str(fpath))
+            wb = openpyxl.load_workbook(str(fpath), keep_links=False)
             changed = 0
             for ws in wb.worksheets:
                 for row in ws.iter_rows():
@@ -680,10 +649,40 @@ def create_app() -> Flask:
                             changed += 1
             # For the cut sheet, also adjust the per-sheath row count
             # to match the fiber count in the new CT suffix.
+            row_adj = 0
             if fpath.name == "cut_sheet.xlsx":
-                changed += _adjust_sheath_row_count(wb, new_cable, new_size)
+                row_adj = _adjust_sheath_row_count(wb, new_cable, new_size)
+                changed += row_adj
             if changed:
-                wb.save(str(fpath))
+                try:
+                    _safe_save_workbook(wb, fpath)
+                except RuntimeError as save_err:
+                    if row_adj and fpath.name == "cut_sheet.xlsx":
+                        # Row adjustment may have triggered the corruption.
+                        # Fall back to rename-only: reload and apply just the rename.
+                        try:
+                            wb2 = openpyxl.load_workbook(str(fpath), keep_links=False)
+                            rename_count = 0
+                            for ws2 in wb2.worksheets:
+                                for row2 in ws2.iter_rows():
+                                    for cell2 in row2:
+                                        if str(cell2.value or "").strip() == cable:
+                                            cell2.value = new_cable
+                                            rename_count += 1
+                            if rename_count:
+                                _safe_save_workbook(wb2, fpath)
+                                changed_total += rename_count
+                        except Exception:
+                            pass
+                        return jsonify({
+                            "ok": False,
+                            "error": (
+                                "Row count adjustment failed to save cleanly "
+                                f"({save_err}). Cable was renamed but fiber rows "
+                                "were not added — proceed with caution."
+                            ),
+                        }), 500
+                    return jsonify({"ok": False, "error": str(save_err)}), 500
                 changed_total += changed
 
         return jsonify({"ok": True, "old_cable": cable, "new_cable": new_cable,
