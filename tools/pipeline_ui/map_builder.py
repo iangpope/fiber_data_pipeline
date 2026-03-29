@@ -53,6 +53,48 @@ _FILL_TO_INFO: dict[str, dict] = {
 _DEFAULT_COLOR = {"label": "Unknown", "css": "#888888"}
 
 
+def _parse_cable_endpoints(cable_name: str):
+    """Return (a_end, b_end) location names from a cable name, or (None, None)."""
+    t = str(cable_name or "").strip()
+    if "_TO_" in t:
+        a, b = t.split("_TO_", 1)
+        b = re.sub(r"_\d{2,3}CT\b", "", b, flags=re.IGNORECASE)
+        return a.strip(), b.strip()
+    m = re.match(r"^\s*\d{2,3}CT\s+(\S+)\s+TO\s+(\S+)\s*$", t, flags=re.IGNORECASE)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return None, None
+
+
+def _snap_cable_segments(
+    segments: list[list[tuple[float, float]]],
+    a_coord: tuple[float, float],
+    b_coord: tuple[float, float],
+) -> list[list[tuple[float, float]]]:
+    """
+    Snap a cable's endpoint coordinates to the known CT splice locations.
+
+    fiberCable KMZ endpoints often drift up to ~300 m from the actual
+    Connections_Table GPS coordinates (GPS inaccuracy, data updates).
+    This function replaces the first point of the first segment and the
+    last point of the last segment with the known CT coordinates, keeping
+    all intermediate waypoints intact.
+    """
+    if not segments:
+        return segments
+
+    # Determine which CT endpoint is closer to the start of segment[0]
+    start = segments[0][0]
+    da = abs(start[0] - a_coord[0]) + abs(start[1] - a_coord[1])
+    db = abs(start[0] - b_coord[0]) + abs(start[1] - b_coord[1])
+    near_start, near_end = (a_coord, b_coord) if da <= db else (b_coord, a_coord)
+
+    snapped = [list(seg) for seg in segments]  # shallow copy each seg list
+    snapped[0][0]   = near_start
+    snapped[-1][-1] = near_end
+    return snapped
+
+
 def _cable_short_name(cable_name: str, loc_name: str) -> str:
     """Return compact 'other-end (size)' label for this cable at this location."""
     if '_TO_' in cable_name:
@@ -313,10 +355,24 @@ def build_geojson(job_dir: str) -> dict:
         location_data[loc] = {"lat": lat, "lon": lon, "cables": cables}
 
     # -----------------------------------------------------------------------
-    # 3. Parse KMZ geometries.
+    # 3. Parse KMZ geometries and snap cable endpoints to CT coordinates.
     # -----------------------------------------------------------------------
     kmz_cables = _parse_kmz_cables(kmz_path) if kmz_path else {}
     infra_segments = _parse_kmz_infrastructure(kmz_path) if kmz_path else []
+
+    # Build a flat lat/lon lookup from location_data for snapping
+    loc_coords = {name: (d["lat"], d["lon"]) for name, d in location_data.items()}
+
+    # Snap each named cable's start/end to CT coordinates so cable lines
+    # visually connect the location markers they reference in their name.
+    for cable_name, segs in list(kmz_cables.items()):
+        a_end, b_end = _parse_cable_endpoints(cable_name)
+        if not a_end or not b_end:
+            continue
+        a_coord = loc_coords.get(a_end)
+        b_coord = loc_coords.get(b_end)
+        if a_coord and b_coord:
+            kmz_cables[cable_name] = _snap_cable_segments(segs, a_coord, b_coord)
 
     # -----------------------------------------------------------------------
     # 4. Build GeoJSON features.
