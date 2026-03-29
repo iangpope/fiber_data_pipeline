@@ -372,6 +372,7 @@
     const locationLatLngs = {};
     const locationMarkers = {};   // name → L.marker
     const locationBaseColors = {}; // name → default icon color
+    let   allPointFeatures = []; // kept in sync so applyRename can patch p.cables
 
     let activeLocName = null;
 
@@ -478,9 +479,19 @@
         const sh = row.querySelector(".cable-short");
         if (sh) sh.textContent = sh.textContent.replace(/\(\d{2,3}CT\)/i, `(${newSize})`);
       });
+      // Patch every point feature's cables array so re-opening the accordion
+      // row later still finds the correct layer and highlight color.
+      allPointFeatures.forEach(f => {
+        (f.properties.cables || []).forEach(c => {
+          if (c.name === oldName) {
+            c.name = newName;
+            if (newSize) c.size = newSize;
+          }
+        });
+      });
       if (activeLocationCables) {
         activeLocationCables = activeLocationCables.map(c =>
-          c.name === oldName ? { ...c, name: newName } : c
+          c.name === oldName ? { ...c, name: newName, size: newSize || c.size } : c
         );
       }
     }
@@ -681,6 +692,7 @@
         const infra  = features.filter(f => f.properties.layer === "infrastructure");
         const cables = features.filter(f => f.geometry.type === "MultiLineString" && f.properties.layer !== "infrastructure");
         const points = features.filter(f => f.geometry.type === "Point");
+        allPointFeatures = points; // keep reference so applyRename can patch cable names
 
         // Draw infrastructure conduit routes as dim background
         infra.forEach(f => {

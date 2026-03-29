@@ -333,6 +333,7 @@ def create_app() -> Flask:
         changed_total = 0
         for fpath in [
             job_dir / "data"   / "Connections_Table.xlsx",
+            job_dir / "data"   / "cut_sheet.xlsx",
             job_dir / "output" / "Colored_Connections_Table.xlsx",
         ]:
             if not fpath.exists():
