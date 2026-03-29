@@ -323,7 +323,11 @@ def _highlight_device_group_starts(ws, splitter_row: int) -> None:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def main() -> None:
+def main(data_dir: str = "data", output_dir: str = "output") -> None:
+    global COLORED_CONNECTIONS_PATH, CUT_SHEET_PATH, OUTPUT_PATH
+    COLORED_CONNECTIONS_PATH = os.path.join(output_dir, "Colored_Connections_Table.xlsx")
+    CUT_SHEET_PATH           = os.path.join(data_dir,   "cut_sheet.xlsx")
+    OUTPUT_PATH              = os.path.join(output_dir, "Colorized_Cut_Sheet_Final_v7_highlighted.xlsx")
     cable_colors = load_cable_colors()
     wb = openpyxl.load_workbook(CUT_SHEET_PATH)
 
@@ -362,7 +366,7 @@ def main() -> None:
             _apply_optical_splitter_colors(ws, conn_dict, srow)
             _highlight_device_group_starts(ws, srow)
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     wb.save(OUTPUT_PATH)
     print(f"Colorized + highlighted cut sheet saved to {OUTPUT_PATH}")
 

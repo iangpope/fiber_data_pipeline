@@ -253,7 +253,10 @@ def classify_sheet(sheet_name: str) -> str:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def main() -> None:
+def main(data_dir: str = "data", output_dir: str = "output") -> None:
+    global input_file, output_file
+    input_file  = os.path.join(output_dir, "Combined_Formatted_Output.xlsx")
+    output_file = os.path.join(output_dir, "Combined_Formatted_Output_processed.xlsx")
     wb     = load_workbook(input_file)
     counts = {}   # tally processed sheets by type for the summary line
 

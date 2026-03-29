@@ -45,14 +45,7 @@ BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR   = os.path.join(BASE_DIR, "data")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 
-kmz_files = [f for f in os.listdir(DATA_DIR) if f.lower().endswith(".kmz")]
-if len(kmz_files) != 1:
-    raise FileNotFoundError(
-        f"Expected 1 KMZ file in {DATA_DIR}, found {len(kmz_files)}"
-    )
-KMZ_PATH = os.path.join(DATA_DIR, kmz_files[0])
-print(f"Using KMZ file: {kmz_files[0]}")
-
+KMZ_PATH            = None
 CONNECTIONS_PATH    = os.path.join(DATA_DIR,   "Connections_Table.xlsx")
 PROCESSED_XLSX_PATH = os.path.join(OUTPUT_DIR, "Combined_Formatted_Output_processed.xlsx")
 FINAL_OUTPUT_PATH   = os.path.join(OUTPUT_DIR, "Combined_Formatted_Output_with_Addresses.xlsx")
@@ -303,7 +296,23 @@ def build_tap_address_map(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def main() -> None:
+def main(data_dir: str = "data", output_dir: str = "output") -> None:
+    global DATA_DIR, OUTPUT_DIR, KMZ_PATH, CONNECTIONS_PATH, PROCESSED_XLSX_PATH, FINAL_OUTPUT_PATH
+    DATA_DIR   = data_dir
+    OUTPUT_DIR = output_dir
+
+    kmz_files = [f for f in os.listdir(DATA_DIR) if f.lower().endswith(".kmz")]
+    if len(kmz_files) != 1:
+        raise FileNotFoundError(
+            f"Expected 1 KMZ file in {DATA_DIR}, found {len(kmz_files)}"
+        )
+    KMZ_PATH = os.path.join(DATA_DIR, kmz_files[0])
+    print(f"Using KMZ file: {kmz_files[0]}")
+
+    CONNECTIONS_PATH    = os.path.join(DATA_DIR,   "Connections_Table.xlsx")
+    PROCESSED_XLSX_PATH = os.path.join(OUTPUT_DIR, "Combined_Formatted_Output_processed.xlsx")
+    FINAL_OUTPUT_PATH   = os.path.join(OUTPUT_DIR, "Combined_Formatted_Output_with_Addresses.xlsx")
+
     try:
         # ------------------------------------------------------------------
         # Load tap GPS coordinates from Connections Table

@@ -443,7 +443,10 @@ def run_part_b(wb) -> None:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def main() -> None:
+def main(data_dir: str = "data", output_dir: str = "output") -> None:
+    global INPUT_FILE, OUTPUT_FILE
+    INPUT_FILE  = Path(output_dir) / "Combined_Reordered_With_OTE.xlsx"
+    OUTPUT_FILE = Path(output_dir) / "Asbuilt_Workbook_post12.xlsx"
     if not INPUT_FILE.exists():
         raise SystemExit(f"Missing input: {INPUT_FILE}")
 

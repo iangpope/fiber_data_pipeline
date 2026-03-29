@@ -27,6 +27,7 @@ Writes: output/Combined_Reordered_With_OTE.xlsx
 
 from __future__ import annotations
 
+import os
 import re
 from copy import copy
 from typing import List, Tuple, Optional
@@ -438,7 +439,10 @@ def label_enclosure(ws) -> bool:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def main() -> None:
+def main(data_dir: str = "data", output_dir: str = "output") -> None:
+    global INPUT_FILE, OUTPUT_FILE
+    INPUT_FILE  = os.path.join(output_dir, "Combined_Formatted_Output_with_Addresses.xlsx")
+    OUTPUT_FILE = os.path.join(output_dir, "Combined_Reordered_With_OTE.xlsx")
     wb = load_workbook(INPUT_FILE)
     reordered = shifted = labeled = 0
 

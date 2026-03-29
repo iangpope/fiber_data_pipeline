@@ -419,11 +419,16 @@ def write_tap_report(
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> None:
+def main(data_dir: str = "data", output_dir: str = "output") -> None:
     """
     Entry point. Resolves input paths, runs each processing stage in order,
     and writes the completed Tap Report to the output directory.
     """
+    global DATA_DIR, OUTPUT_DIR, TEMPLATE, ASBUILT
+    DATA_DIR   = Path(data_dir)
+    OUTPUT_DIR = Path(output_dir)
+    TEMPLATE   = DATA_DIR / "Tap_Report_Template.xlsx"
+    ASBUILT    = OUTPUT_DIR / "Asbuilt_Workbook_post12.xlsx"
     haf_path    = Path(sys.argv[1]) if len(sys.argv) > 1 else _find_haf()
     asbuilt     = Path(sys.argv[2]) if len(sys.argv) > 2 else ASBUILT
 

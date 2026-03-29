@@ -606,7 +606,10 @@ def _write_report(results: list[dict], output_path: Path) -> None:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def main() -> None:
+def main(data_dir: str = "data", output_dir: str = "output") -> None:
+    global INPUT_FILE, OUTPUT_FILE
+    INPUT_FILE  = Path(output_dir) / "Asbuilt_Workbook_post12.xlsx"
+    OUTPUT_FILE = Path(output_dir) / "Path_of_Light_Confirmation.xlsx"
     if not INPUT_FILE.exists():
         raise SystemExit(f"Input file not found: {INPUT_FILE}")
 
