@@ -28,11 +28,17 @@
       </div>
     </div>
 
-    <!-- Live log -->
-    <div class="log-card">
+    <!-- Processing spinner (visible during normal operation) -->
+    <div class="processing-area" id="processingArea">
+      <div class="spin-ring"></div>
+      <p class="processing-label" id="processingLabel">Processing…</p>
+    </div>
+
+    <!-- Error log (hidden; revealed only when the pipeline fails) -->
+    <div class="log-card" id="logCard" style="display:none">
       <div class="log-header">
-        <span>Live Output</span>
-        <span class="log-badge" id="logBadge">Running</span>
+        <span>Output</span>
+        <span class="log-badge failed" id="logBadge">Error</span>
       </div>
       <div class="log-body" id="logBody"></div>
     </div>

@@ -303,6 +303,66 @@ def is_diagonal_bearing(b: float) -> bool:
     )
 
 
+def _optimal_direction_assignment(cable_bearings: list) -> dict:
+    """
+    Assign cardinal direction colors to regular cables at one location so that
+    the total angular deviation from assigned directions is minimised, with no
+    two cables sharing the same color when four or fewer cables are present.
+
+    cable_bearings : list of (col, bearing_degrees) tuples (OLT/MST excluded).
+    Returns        : dict { col -> color_name }.
+    """
+    from itertools import combinations, permutations as _perms
+
+    DIRS     = {"orange": 0, "green": 90, "brown": 180, "slate": 270}
+    dir_list = list(DIRS.keys())
+
+    def dev(b, color):
+        angle = DIRS[color]
+        return abs((b - angle + 180) % 360 - 180)
+
+    n = len(cable_bearings)
+    if n == 0:
+        return {}
+    if n == 1:
+        col, b = cable_bearings[0]
+        return {col: min(dir_list, key=lambda c: dev(b, c))}
+
+    if n <= 4:
+        # Exhaustive search over all ways to assign n distinct colors to n cables.
+        # Max iterations: C(4,4)*4! = 24 — negligible cost.
+        best_cost, best = float("inf"), {}
+        for color_subset in combinations(dir_list, n):
+            for perm in _perms(color_subset):
+                cost = sum(dev(cable_bearings[i][1], perm[i]) for i in range(n))
+                if cost < best_cost:
+                    best_cost = cost
+                    best = {cable_bearings[i][0]: perm[i] for i in range(n)}
+        return best
+
+    # More than 4 cables: assign one cable per direction first (minimum-deviation
+    # greedy pairing), then assign extras to their nearest direction (repeats allowed).
+    result, used_dirs = {}, set()
+    for _ in range(4):
+        best_cost, best_col, best_color = float("inf"), None, None
+        for col, b in cable_bearings:
+            if col in result:
+                continue
+            for color in dir_list:
+                if color in used_dirs:
+                    continue
+                c = dev(b, color)
+                if c < best_cost:
+                    best_cost = c; best_col = col; best_color = color
+        if best_col:
+            result[best_col] = best_color
+            used_dirs.add(best_color)
+    for col, b in cable_bearings:
+        if col not in result:
+            result[col] = min(dir_list, key=lambda c: dev(b, c))
+    return result
+
+
 def generate_colored_table(named_edges: list, location_coords: dict,
                            connections_path: str, output_path: str) -> None:
     """
@@ -474,52 +534,38 @@ def generate_colored_table(named_edges: list, location_coords: dict,
                     cable_confidence.setdefault(str(cable), {"bearing": None, "confidence": "ok"})
                     continue
 
-            # -- Compute bearing --
-            # Primary: use Connections-Table splice-to-splice bearing.
-            # The fiberCable KMZ layer only stores straight 2-point lines, so
-            # bearing(A, B) via CT coords is equally accurate and more reliable
-            # (no KMZ GPS drift, works for all cable name formats).
-            # Fallback: KMZ 5 m walk (for cables with non-parseable names).
-            a_end, b_end, _ = parse_endpoints(str(cable))
-            other_loc_name  = None
-            if a_end and b_end:
-                loc_str = str(loc).strip()
-                if loc_str == a_end:
-                    other_loc_name = b_end
-                elif loc_str == b_end:
-                    other_loc_name = a_end
-            ct_other_coord = (
-                location_coords.get(other_loc_name) if other_loc_name else None
-            )
+            # -- Compute bearing via KMZ geometry walk --
+            # Walk 25 m along the cable from this enclosure to determine the
+            # direction it exits.  This is more accurate than a straight
+            # splice-to-splice bearing because it follows the physical route
+            # (including initial bends near the enclosure) rather than the
+            # straight line between endpoints.
+            _WALK_DIST = 25  # metres — long enough to clear GPS jitter
 
             is_short = False
-            if ct_other_coord is not None:
-                # Direct bearing from this splice to the other splice endpoint.
-                b = bearing(latlon, ct_other_coord)
-            else:
-                # KMZ-based 5 m walk fallback.
-                dist   = 0
-                walked = latlon
-                for i in range(len(coords) - 1):
-                    seg_len = geodesic(coords[i], coords[i + 1]).meters
-                    if dist + seg_len >= 5:
-                        ratio  = (5 - dist) / seg_len
-                        lat_w  = coords[i][0] + (coords[i + 1][0] - coords[i][0]) * ratio
-                        lon_w  = coords[i][1] + (coords[i + 1][1] - coords[i][1]) * ratio
-                        walked = (lat_w, lon_w)
-                        break
-                    dist += seg_len
+            dist     = 0
+            walked   = latlon
+            for i in range(len(coords) - 1):
+                seg_len = geodesic(coords[i], coords[i + 1]).meters
+                if dist + seg_len >= _WALK_DIST:
+                    ratio  = (_WALK_DIST - dist) / seg_len
+                    lat_w  = coords[i][0] + (coords[i + 1][0] - coords[i][0]) * ratio
+                    lon_w  = coords[i][1] + (coords[i + 1][1] - coords[i][1]) * ratio
+                    walked = (lat_w, lon_w)
+                    break
+                dist += seg_len
 
-                if walked == latlon:
-                    is_short = True
-                    cable_len = sum(
-                        geodesic(coords[i], coords[i + 1]).meters
-                        for i in range(len(coords) - 1)
-                    )
-                    dbg_short_cables.append((str(loc), str(cable), round(cable_len, 2)))
-                    walked = coords[-1]
+            if walked == latlon:
+                # Cable shorter than walk distance — use the far endpoint instead.
+                is_short  = True
+                cable_len = sum(
+                    geodesic(coords[i], coords[i + 1]).meters
+                    for i in range(len(coords) - 1)
+                )
+                dbg_short_cables.append((str(loc), str(cable), round(cable_len, 2)))
+                walked = coords[-1]
 
-                b = bearing(latlon, walked)
+            b = bearing(latlon, walked)
             color = bearing_to_color(b)
             conf  = "short" if is_short else ("diagonal" if is_diagonal_bearing(b) else "ok")
             if is_diagonal_bearing(b):
@@ -536,40 +582,30 @@ def generate_colored_table(named_edges: list, location_coords: dict,
     # ------------------------------------------------------------------
     # Output pass: write rows to the workbook and apply cell fills.
     #
-    # Each location gets at most one cell of each directional color; if two
-    # cables happen to have the same bearing category, the second is assigned
-    # the next-nearest unused direction rather than a duplicate.
+    # OLT (olive) and MST (red) cables are given fixed colors. The remaining
+    # cables at each location are assigned cardinal directions using
+    # _optimal_direction_assignment, which minimises total angular deviation
+    # and guarantees each cable gets a unique direction when ≤ 4 are present.
     # ------------------------------------------------------------------
     for entries, conn_cols, raw in all_colored_rows:
         ws.append(entries)
-        used     = set()     # directional colors already assigned at this location
-        assigned = {}        # col -> color_name for final fill application
+        assigned = {}   # col -> color_name for final fill application
 
+        # OLT and MST/red cables have fixed colors — assign them first.
+        # Collect the remaining cables for optimal cardinal-direction assignment.
+        regular = []
         for col, colr, b in raw:
             if colr == "olt":
                 assigned[col] = "olt"
-                continue
-
-            cable_val = entries[3 + conn_cols.index(col)]
-            if cable_val in red_cables:
-                # Cable was confirmed MST in the pre-scan; always red.
+            elif entries[3 + conn_cols.index(col)] in red_cables:
                 assigned[col] = "red"
-            elif colr not in used:
-                # First cable with this direction at this location; use it directly.
-                assigned[col] = colr
-                used.add(colr)
             else:
-                # Direction already used; pick the next-nearest unused direction.
-                direction_angles = {"orange": 0, "green": 90, "brown": 180, "slate": 270}
-                alt      = list({"orange", "green", "brown", "slate"} - used)
-                if not alt:
-                    alt = list(direction_angles.keys())   # all used; allow repeat
-                fallback = min(
-                    alt,
-                    key=lambda c: abs((b - direction_angles[c] + 180) % 360 - 180),
-                )
-                assigned[col] = fallback
-                used.add(fallback)
+                regular.append((col, b))
+
+        # Optimally assign N / E / S / W to minimise total angular deviation.
+        # When ≤ 4 regular cables are present each gets a unique direction;
+        # beyond 4 the optimal 4 are assigned first, extras get their nearest.
+        assigned.update(_optimal_direction_assignment(regular))
 
         # Apply fills to the connection columns (columns 4 onward in the sheet).
         loc_current = entries[0]

@@ -1,19 +1,33 @@
 /**
  * run.js -- SSE EventSource client for the live pipeline log page.
  *
- * Connects to /stream/<job_id>, receives log lines one at a time,
- * appends them to the log body, advances the step progress pips,
- * and handles checkpoint and done events.
+ * Normal operation: shows a spinner + step label only.
+ * On failure: reveals the log card with buffered output for debugging.
  */
 
 function startStream(jobId) {
-  const logBody    = document.getElementById("logBody");
-  const logBadge   = document.getElementById("logBadge");
-  const statusLabel = document.getElementById("statusLabel");
-  const stepBar    = document.getElementById("stepBar");
+  const processingArea  = document.getElementById("processingArea");
+  const processingLabel = document.getElementById("processingLabel");
+  const logCard         = document.getElementById("logCard");
+  const logBody         = document.getElementById("logBody");
+  const statusLabel     = document.getElementById("statusLabel");
 
-  let currentStep  = 0;
+  let currentStep       = 0;
   let checkpointPending = false;
+  const bufferedLines   = [];   // all log lines, kept in case we need to show them
+
+  const STEP_NAMES = {
+    1: "Extracting KMZ coordinates",
+    2: "Computing cable directions",
+    3: "Colorizing cut sheet",
+    4: "Formatting top section",
+    5: "Normalizing connections",
+    6: "Assigning addresses",
+    7: "Processing taps",
+    8: "Finalizing workbook",
+    9: "Tracing path of light",
+    10: "Generating tap report",
+  };
 
   const source = new EventSource(`/stream/${jobId}`);
 
@@ -25,26 +39,24 @@ function startStream(jobId) {
 
     // ── Log line ────────────────────────────────────────────────────────
     if (msg.type === "log") {
-      // Advance step pip when step number changes.
+      bufferedLines.push(msg.line);
+
       if (msg.step && msg.step !== currentStep) {
         currentStep = msg.step;
         markStep(currentStep, "active");
         if (currentStep > 1) markStep(currentStep - 1, "done");
-        statusLabel.textContent = `Running step ${currentStep} of 10…`;
+        const name = STEP_NAMES[currentStep] || `Step ${currentStep}`;
+        statusLabel.textContent  = `Step ${currentStep} of 10`;
+        processingLabel.textContent = name + "…";
       }
-      appendLine(msg.line, "log-line");
     }
 
     // ── Checkpoint ──────────────────────────────────────────────────────
     if (msg.type === "checkpoint") {
       source.close();
       checkpointPending = true;
-      logBadge.textContent = "Checkpoint";
-      logBadge.className   = "log-badge checkpoint";
-      statusLabel.textContent = "Review required — pipeline paused";
-      appendLine("─── CHECKPOINT: Steps 1–2 complete. Review the Colored Connections Table. ───", "log-separator");
-
-      // Redirect to checkpoint page after a short delay.
+      statusLabel.textContent      = "Checkpoint — pipeline paused";
+      processingLabel.textContent  = "Review required…";
       setTimeout(() => {
         window.location.href = `/checkpoint/${jobId}`;
       }, 1200);
@@ -56,19 +68,22 @@ function startStream(jobId) {
 
       if (msg.status === "complete") {
         markStep(currentStep, "done");
-        logBadge.textContent = "Complete";
-        logBadge.className   = "log-badge done";
-        statusLabel.textContent = "All steps finished — preparing downloads…";
-        appendLine("─── Pipeline complete ───", "log-separator");
+        statusLabel.textContent     = "All steps finished";
+        processingLabel.textContent = "Complete — preparing downloads…";
         setTimeout(() => {
           window.location.href = `/complete/${jobId}`;
         }, 1500);
+
       } else if (msg.status === "failed") {
         markStep(currentStep, "failed");
-        logBadge.textContent = "Failed";
-        logBadge.className   = "log-badge failed";
-        statusLabel.textContent = "Pipeline failed — see log for details";
+        statusLabel.textContent = "Pipeline failed";
+
+        // Reveal the log card and dump everything we buffered
+        processingArea.style.display = "none";
+        logCard.style.display        = "block";
+        bufferedLines.forEach(l => appendLine(l, "log-line"));
         appendLine(`ERROR: ${msg.error || "Unknown error"}`, "log-error");
+
       } else {
         // stopped_at_checkpoint or other
         window.location.href = `/complete/${jobId}`;
@@ -78,8 +93,9 @@ function startStream(jobId) {
 
   source.onerror = function() {
     if (!checkpointPending) {
-      logBadge.textContent = "Disconnected";
-      logBadge.className   = "log-badge failed";
+      processingArea.style.display = "none";
+      logCard.style.display        = "block";
+      bufferedLines.forEach(l => appendLine(l, "log-line"));
       appendLine("Connection to server lost. Check that the pipeline is still running.", "log-error");
     }
   };
@@ -87,9 +103,9 @@ function startStream(jobId) {
   // ── Helpers ─────────────────────────────────────────────────────────────
 
   function appendLine(text, cls) {
-    if (!text && !text.trim()) return;
+    if (!text || !text.trim()) return;
     const line = document.createElement("div");
-    line.className = cls || "log-line";
+    line.className  = cls || "log-line";
     line.textContent = text;
     logBody.appendChild(line);
     logBody.scrollTop = logBody.scrollHeight;

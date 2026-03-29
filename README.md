@@ -9,7 +9,7 @@
 ## Overview
 
 This pipeline processes GIS exports from a fiber network design tool and produces
-a finalized Excel workbook used by field technicians as a splicing model and guide.
+a finalized Excel workbook used by field technicians as a splicing guide.
 Each sheet in the output corresponds to one splice enclosure or tap location and
 contains:
 
@@ -31,11 +31,12 @@ contains:
 | `openpyxl` | Excel read/write |
 | `pandas` | Tabular data processing |
 | `geopy` | Geodesic distance calculation |
+| `flask` | Web UI server |
 
 Install dependencies:
 
 ```bash
-pip install openpyxl pandas geopy
+pip install openpyxl pandas geopy flask
 ```
 
 ---
@@ -57,38 +58,54 @@ The pipeline auto-detects input files by name pattern — no renaming required.
 
 ## Running the Pipeline
 
+### Web UI (recommended)
+
+```bash
+cd tools/pipeline_ui
+./start.sh          # or: python3 run.py
+```
+
+Open `http://localhost:5000` in a browser. Upload the KMZ and cut sheet (and
+optionally a HAF report), then click **Run Pipeline**. The UI streams live
+progress, redirects to the checkpoint review page after step 2, and provides
+download links on completion.
+
+#### Checkpoint Review Page
+
+After steps 1–2 complete, the pipeline pauses at a checkpoint with:
+
+- **Interactive Leaflet map** showing the fiber cable network colored by
+  direction. Only fiber cables are shown (support/infrastructure conduits are
+  hidden for clarity). Click any splice location node to highlight the cables
+  attached to it and display their sheath labels.
+- **Direction override** — click a cable color chip to reassign its compass
+  direction (North / South / East / West / OLT / MST). Changes are written back
+  to the Colored Connections Table immediately.
+- **Cable resize** — change a cable's CT count (12 / 24 / 48 / 96 / 144). The
+  tool renames all occurrences in both the Connections Table and the cut sheet,
+  and also adjusts the fiber row count in the cut sheet:
+  - New rows continue the TIA-598 buffer/fiber color sequence (BL→OR→GR→BR→SL→WH→RD→BK→YE→VI→PI→AQ)
+  - Rows are marked connected (`<- FUSION ->`) up to the fiber count the
+    right-side cable supports; remaining rows are marked `X` with blank right-side columns
+  - When both cables at a splice are resized, the cross-sheet reconciliation
+    pass automatically heals previously-X rows in sibling cable blocks
+
+### Command Line (headless)
+
 ```bash
 python3 0_run_pipeline_with_checkpoint.py
 ```
 
 The runner executes steps 1–8 in order and **pauses after step 2** so you can
-open `output/Colored_Connections_Table.xlsx` and verify that every cable has been
-assigned the correct directional color before the color-coding is applied to the
-full workbook.
+open `output/Colored_Connections_Table.xlsx` and verify cable direction colors
+before applying them to the full workbook.
 
-Step 2 also prints a **debug/confidence log** to the terminal listing:
-- Cables not found in the KMZ (no geometry, no color assigned)
-- Cables shorter than 5 m (bearing taken from far endpoint, less reliable)
-- Cables whose bearing falls in a diagonal zone (direction assignment less certain)
-
-Review these before approving the checkpoint.
-
-Steps 9 and 10 are run independently after the main pipeline completes.
-
-### Options
+#### Options
 
 ```
 --yes           Skip the checkpoint prompt and continue automatically
---start N       Resume from step N (1–8), e.g. after fixing an input file
---stop N        Stop after step N (1–8), e.g. to inspect intermediate output
-```
-
-Examples:
-
-```bash
-python3 0_run_pipeline_with_checkpoint.py --yes           # fully automated
-python3 0_run_pipeline_with_checkpoint.py --start 3       # re-run from step 3
-python3 0_run_pipeline_with_checkpoint.py --start 5 --stop 7
+--start N       Resume from step N (1–8)
+--stop N        Stop after step N (1–8)
 ```
 
 ---
@@ -99,7 +116,7 @@ python3 0_run_pipeline_with_checkpoint.py --start 5 --stop 7
 |---|---|---|---|
 | 1 | `1_coords_from_kmz.py` | KMZ, cut sheet | `data/Connections_Table.xlsx` |
 | 2 | `2_compute_all_directions.py` | KMZ, Connections Table | `output/Colored_Connections_Table.xlsx` |
-| **—** | **Manual checkpoint** | Verify direction colors | |
+| **—** | **Checkpoint** | Verify / adjust direction colors | |
 | 3 | `3_colorize.py` | Cut sheet, Colored Connections | `output/Colorized_Cut_Sheet_Final_v7_highlighted.xlsx` |
 | 4 | `4_format_top_section.py` | Colorized cut sheet | `output/Combined_Formatted_Output.xlsx` |
 | 5 | `5_change_connections_column.py` | Combined formatted output | `output/Combined_Formatted_Output_processed.xlsx` |
@@ -111,8 +128,27 @@ python3 0_run_pipeline_with_checkpoint.py --start 5 --stop 7
 
 Steps 1–8 produce the finished splice workbook. Step 9 verifies PON continuity
 by tracing every tap PORT back to the OLT and reporting any broken paths. Step 10
-generates the field Tap Report by combining the HAF address data with the burn
-summary extracted from the asbuilt workbook.
+generates the field Tap Report from the HAF address data and asbuilt workbook.
+
+---
+
+## Direction Algorithm
+
+Step 2 assigns a compass direction (North / East / South / West) to each cable
+at each splice location using:
+
+1. **KMZ geometry walk** — walks 25 m along each cable's actual routed path from
+   the splice node, rather than using the straight endpoint-to-endpoint bearing.
+   This gives accurate directions even for cables that leave a node at an angle
+   before routing in a different compass direction.
+
+2. **Optimal assignment** — when multiple cables leave the same node, an
+   exhaustive search over all direction permutations minimizes total angular
+   deviation. This prevents the suboptimal assignments that arise from greedy
+   first-come-first-served direction picking at complex junctions.
+
+Step 2 also emits a confidence log listing cables that are short (< 25 m, less
+reliable bearing) or not found in the KMZ geometry.
 
 ---
 
@@ -128,8 +164,8 @@ summary extracted from the asbuilt workbook.
 | Olive green | OLT connection |
 | Yellow | Fusion splice / PORT boundary |
 | Light blue | Splitter COMMON port |
-| Light pink | 1x32 splitter output |
-| Dark pink | 1x2 splitter output |
+| Light pink | 1×32 splitter output |
+| Dark pink | 1×2 splitter output |
 | Peach | MUX port |
 | Salmon | DEMUX port |
 
@@ -139,11 +175,31 @@ summary extracted from the asbuilt workbook.
 
 | Module | Purpose |
 |---|---|
-| `config.py` | Central color palette, `PatternFill` cache, directory paths, and connection column value constants (`CONN_RAW_FUSION`, `CONN_FUSED`, etc.) |
-| `naming_utils.py` | Location name parsing and classification (new `_FT_`/`_SE_` and legacy `MIC...` formats); worksheet column/row detection utilities |
+| `config.py` | Central color palette, `PatternFill` cache, directory paths, TIA-598 fiber/buffer color sequence, and connection column value constants |
+| `naming_utils.py` | Location name parsing and classification (`_FT_`/`_SE_` and legacy `MIC...` formats); worksheet column/row detection utilities |
 
-All pipeline scripts import from these modules rather than defining their own
-constants, ensuring consistent colors and behavior across every step.
+---
+
+## Tools
+
+### Pipeline Web UI — `tools/pipeline_ui/`
+
+Flask web application that wraps the full pipeline with:
+- Drag-and-drop file upload for KMZ, cut sheet, and optional HAF report
+- Real-time progress via Server-Sent Events (spinner + step label during normal
+  operation; terminal log revealed only on failure)
+- Interactive checkpoint review map (Leaflet.js) with direction overrides and
+  cable resize
+- Download links for all output files on completion
+
+Start: `cd tools/pipeline_ui && ./start.sh` (default port 5000)
+
+### Cable Resize Tool — `tools/resize_cables/`
+
+Standalone Flask tool for resizing cables in an existing cut sheet outside of a
+pipeline run. Provides a simple web form to select a cable and target CT count.
+
+Start: `cd tools/resize_cables && ./start.sh` (default port 5001)
 
 ---
 
@@ -153,8 +209,9 @@ constants, ensuring consistent colors and behavior across every step.
 Fiber Data Pipeline/
 ├── data/                          # Input files (KMZ, cut sheet, HAF, template)
 ├── output/                        # All intermediate and final outputs
-├── config.py                      # Shared constants and color fills
+├── config.py                      # Shared constants, color fills, TIA-598 sequence
 ├── naming_utils.py                # Location naming and classification
+├── pipeline_runner.py             # Orchestrates steps 1–10 with callbacks
 ├── 0_run_pipeline_with_checkpoint.py
 ├── 1_coords_from_kmz.py
 ├── 2_compute_all_directions.py
@@ -165,27 +222,40 @@ Fiber Data Pipeline/
 ├── 7_process_taps.py
 ├── 8_finalize.py
 ├── 9_path_of_light.py
-└── 10_generate_tap_report.py
+├── 10_generate_tap_report.py
+└── tools/
+    ├── pipeline_ui/               # Web UI (Flask + Leaflet checkpoint map)
+    │   ├── app.py
+    │   ├── map_builder.py
+    │   ├── static/
+    │   └── templates/
+    └── resize_cables/             # Standalone cable resize tool
+        ├── app.py
+        ├── resize_logic.py
+        ├── static/
+        └── templates/
 ```
 
 ---
 
 ## Branch Notes
 
-This is the **`dev` branch**. It supports the new `RC73E_FT_001` / `RC73E_SE_001`
+This is the **`dev` branch**. It supports the `RC73E_FT_001` / `RC73E_SE_001`
 naming convention introduced for the RC73E project while retaining backward
 compatibility with the legacy `MIC...` naming used in earlier projects.
 
 Key improvements over `main`:
-- Scripts renumbered 0–8 (no gaps) with a single orchestrating runner
+- **Pipeline Web UI** with SSE log streaming, interactive checkpoint map, inline
+  direction overrides, and cable CT resizing with automatic row adjustment
+- **Improved direction algorithm** — KMZ geometry walk (25 m) + exhaustive
+  optimal assignment replaces endpoint bearing + greedy deduplication
+- **Cable resize row adjustment** — extending a cable's CT count adds rows with
+  correct TIA-598 buffer/fiber sequence and proper connection or X markers;
+  cross-sheet reconciliation heals sibling cable blocks when both cables at a
+  splice are resized
+- Scripts renumbered 0–10 with a single orchestrating runner (`pipeline_runner.py`)
 - MST tap detection uses nearest-FT-per-SE logic instead of a fixed distance threshold
-- Cable orientation uses geodesic nearest-endpoint comparison instead of exact float
-  equality, correctly handling floating point differences between KMZ and table coordinates
-- Column detection is header-based throughout steps 3, 5, 7, and 8 — resilient to
-  column additions or reordering in future Magellan exports
-- Metadata row detection (enclosure label, tray count) uses column-A content scan
-  instead of fixed row numbers — resilient to changes in the metadata block height
+- Column detection is header-based throughout — resilient to column additions or
+  reordering in future Magellan exports
 - Connection column value strings centralized in `config.py` as named constants
-- Step 2 emits a debug/confidence log flagging cables to scrutinize before checkpoint approval
 - All colors, paths, and shared logic centralized in `config.py` and `naming_utils.py`
-- Professional commenting throughout all scripts

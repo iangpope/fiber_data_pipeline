@@ -397,7 +397,7 @@
     function clearHighlights() {
       activeHighlights.forEach(({layer}) => {
         layer.eachLayer(l => l.setStyle({ color: CABLE_GRAY, weight: CABLE_WEIGHT, opacity: 0.65 }));
-        try { layer.closeTooltip(); } catch(e) {}
+        try { layer.unbindTooltip(); } catch(e) {}
       });
       activeHighlights = [];
       activeLocationCables = null;
@@ -411,7 +411,13 @@
         const layer = cableLayerMap[c.name];
         if (!layer) return;
         layer.eachLayer(l => l.setStyle({ color: c.color, weight: 4, opacity: 1 }));
-        try { layer.openTooltip(); } catch(e) {}
+        // Bind label only while this location is open — unbindTooltip removes it on close
+        const label = (cableProps[c.name] || {}).label || cableLabel(c.name);
+        try {
+          layer.bindTooltip(label, {
+            permanent: true, className: 'cable-label', direction: 'center', sticky: false,
+          }).openTooltip();
+        } catch(e) {}
         activeHighlights.push({ layer });
       });
     }
@@ -689,21 +695,11 @@
           statusEl.textContent = "No map data available — check step 1/2 output"; return;
         }
 
-        const infra  = features.filter(f => f.properties.layer === "infrastructure");
         const cables = features.filter(f => f.geometry.type === "MultiLineString" && f.properties.layer !== "infrastructure");
         const points = features.filter(f => f.geometry.type === "Point");
         allPointFeatures = points; // keep reference so applyRename can patch cable names
 
-        // Draw infrastructure conduit routes as dim background
-        infra.forEach(f => {
-          f.geometry.coordinates.forEach(seg => {
-            L.polyline(seg.map(c => [c[1], c[0]]), {
-              color: "#4a5568", weight: 1.2, opacity: 0.45, interactive: false,
-            }).addTo(layerLines);
-          });
-        });
-
-        // Draw named cable lines (gray; color shows on node expand)
+        // Draw named fiber cable lines (gray; color + label shows when location is opened)
         cables.forEach(f => {
           const p = f.properties;
           const uncertain = p.confidence === "diagonal" || p.confidence === "short";
@@ -716,13 +712,12 @@
             pl.bindPopup(() => buildCablePopup(p.cable), { maxWidth: 320 });
             fg.addLayer(pl);
           });
-          fg.bindTooltip(cableLabel(p.cable), {
-            permanent: true, className: 'cable-label', direction: 'center', sticky: false,
-          });
-          fg.closeTooltip();
           fg.addTo(layerLines);
+          // No tooltip bound here — labels are bound/unbound in highlightCables/clearHighlights
+          // so they only appear when a location is actively selected.
           cableProps[p.cable] = { color: p.color, direction: p.direction,
-                                  bearing: p.bearing, confidence: p.confidence };
+                                  bearing: p.bearing, confidence: p.confidence,
+                                  label: cableLabel(p.cable) };
           cableLayerMap[p.cable] = fg;
         });
 
@@ -757,8 +752,8 @@
         if (s.short    > 0) issues.push(`⚠ ${s.short} short`);
         if (s.missing  > 0) issues.push(`✕ ${s.missing} missing from KMZ`);
         statusEl.textContent = issues.length
-          ? `${cables.length} cable(s) — ${issues.join(" · ")} · expand a location to review`
-          : `${cables.length} cable(s) · ${points.length} location(s) — all OK · expand a location to review`;
+          ? `${cables.length} fiber cable(s) — ${issues.join(" · ")} · click a location to review`
+          : `${cables.length} fiber cable(s) · ${points.length} location(s) — all OK · click a location to review`;
 
         buildAccordion(points);
       })
