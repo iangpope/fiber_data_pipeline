@@ -154,6 +154,11 @@ def create_app() -> Flask:
         if haf_file and haf_file.filename:
             haf_file.save(data_dir / haf_file.filename)
 
+        # Auto-copy Tap Report Template from pipeline data/ folder if present.
+        _template_src = _ROOT / "data" / "Tap_Report_Template.xlsx"
+        if _template_src.exists():
+            shutil.copy(str(_template_src), str(data_dir / "Tap_Report_Template.xlsx"))
+
         # Register job.
         _JOBS[job_id] = {
             "queue":              queue.Queue(),
