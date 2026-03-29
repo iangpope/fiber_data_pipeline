@@ -353,6 +353,141 @@ def _adjust_sheath_row_count(wb, cable: str, new_size: str) -> int:
     return rows_changed
 
 
+def _heal_partner_x_rows(wb, resized_cable: str, new_size: str) -> int:
+    """
+    After resizing ``resized_cable`` to ``new_size``, scan every worksheet
+    for cable blocks whose *last* connected right-side partner is
+    ``resized_cable`` and that have trailing X rows (blank right side).
+
+    This handles the order-of-resize problem: when cable B is resized
+    before cable A, B's new rows become X because A was still small.
+    Once A is resized here, those X rows in B are healed automatically.
+
+    Only heals rows whose 1-based position within the block is ≤ the new
+    CT count of the resized cable, and only where CONNECTION == 'X' and
+    the right-side SHEATH NAME is blank — i.e. rows that were set to X
+    specifically because the partner didn't reach them yet.
+    """
+    m = re.match(r'^(\d+)CT$', new_size, re.IGNORECASE)
+    if not m:
+        return 0
+    new_ct = int(m.group(1))
+    healed = 0
+
+    for ws in wb.worksheets:
+        hdr_row = None
+        for r in range(1, min(ws.max_row, 120) + 1):
+            for c in range(1, min(ws.max_column, 30) + 1):
+                v = ws.cell(r, c).value
+                if isinstance(v, str) and 'SHEATH UUID' in v.upper():
+                    hdr_row = r
+                    break
+            if hdr_row:
+                break
+        if hdr_row is None:
+            continue
+
+        def _col(label, after=0):
+            for c in range(1, ws.max_column + 1):
+                if c <= after:
+                    continue
+                v = ws.cell(hdr_row, c).value
+                if isinstance(v, str) and v.strip().upper() == label.upper():
+                    return c
+            return None
+
+        sheath_col      = _col('SHEATH NAME')                      or 2
+        buffer_col      = _col('BUFFER')                           or 5
+        fiber_col       = _col('FIBER')                            or 6
+        conn_col        = _col('CONNECTION')                       or 10
+        r_fiber_col     = _col('FIBER',       after=conn_col)      or 11
+        r_buffer_col    = _col('BUFFER',      after=conn_col)      or 12
+        r_end_enc_col   = _col('END ENC',     after=conn_col)      or 13
+        r_start_enc_col = _col('START ENC',   after=conn_col)      or 14
+        r_sheath_col    = _col('SHEATH NAME', after=conn_col)      or 15
+        r_uuid_col      = _col('SHEATH UUID', after=conn_col)      or 16
+
+        splitter_row = None
+        for r in range(hdr_row + 1, ws.max_row + 1):
+            v = ws.cell(r, 1).value
+            if isinstance(v, str) and 'OPTICAL SPLITTERS' in v.upper():
+                splitter_row = r
+                break
+        end_row = (splitter_row - 1) if splitter_row else ws.max_row
+
+        # Group rows into cable blocks by left-side sheath name.
+        current_name = None
+        current_rows = []
+        blocks: list[tuple[str, list[int]]] = []
+        for r in range(hdr_row + 1, end_row + 1):
+            v = ws.cell(r, sheath_col).value
+            if isinstance(v, str) and v.strip():
+                name = v.strip()
+                if name != current_name:
+                    if current_name and current_rows:
+                        blocks.append((current_name, current_rows))
+                    current_name = name
+                    current_rows = [r]
+                else:
+                    current_rows.append(r)
+        if current_name and current_rows:
+            blocks.append((current_name, current_rows))
+
+        for blk_name, brows in blocks:
+            if blk_name == resized_cable:
+                continue  # skip the cable we just resized
+
+            # Find the right-side cable of the LAST connected row.
+            last_r_cable = None
+            last_r_uuid  = None
+            for br in reversed(brows):
+                rv = ws.cell(br, r_sheath_col).value
+                if rv and str(rv).strip():
+                    last_r_cable = str(rv).strip()
+                    last_r_uuid  = ws.cell(br, r_uuid_col).value
+                    break
+
+            # Only heal blocks whose last partner is the cable we just resized.
+            if last_r_cable != resized_cable:
+                continue
+
+            # Get right-side enclosure values and connection symbol.
+            r_enc_end = r_enc_start = None
+            for br in reversed(brows):
+                v = ws.cell(br, r_end_enc_col).value
+                if v is not None:
+                    r_enc_end   = v
+                    r_enc_start = ws.cell(br, r_start_enc_col).value
+                    break
+
+            conn_sym = "<- FUSION ->"
+            for br in brows:
+                v = str(ws.cell(br, conn_col).value or "").strip()
+                if v and v != "X":
+                    conn_sym = v
+                    break
+
+            # Heal trailing X rows (blank right side) up to new_ct capacity.
+            for pos_idx, br in enumerate(brows):
+                if pos_idx + 1 > new_ct:
+                    break
+                cv    = str(ws.cell(br, conn_col).value or "").strip()
+                rname = ws.cell(br, r_sheath_col).value
+                if cv != "X" or rname is not None:
+                    continue
+                buf_c = str(ws.cell(br, buffer_col).value or "").strip()
+                fib_c = str(ws.cell(br, fiber_col).value  or "").strip()
+                ws.cell(br, conn_col).value          = conn_sym
+                ws.cell(br, r_fiber_col).value       = fib_c
+                ws.cell(br, r_buffer_col).value      = buf_c
+                ws.cell(br, r_end_enc_col).value     = r_enc_end
+                ws.cell(br, r_start_enc_col).value   = r_enc_start
+                ws.cell(br, r_sheath_col).value      = resized_cable
+                ws.cell(br, r_uuid_col).value        = last_r_uuid
+                healed += 1
+
+    return healed
+
 
 # ---------------------------------------------------------------------------
 # In-memory job registry
@@ -668,11 +803,13 @@ def create_app() -> Flask:
                             changed += 1
             if fpath.name == "cut_sheet.xlsx":
                 cut_sheet_changed = changed
-            # For the cut sheet, also adjust the per-sheath row count
-            # to match the fiber count in the new CT suffix.
+            # For the cut sheet, also adjust the per-sheath row count and
+            # heal any partner cable blocks that have trailing X rows from a
+            # previous resize where the partner was still smaller.
             row_adj = 0
             if fpath.name == "cut_sheet.xlsx":
-                row_adj = _adjust_sheath_row_count(wb, new_cable, new_size)
+                row_adj  = _adjust_sheath_row_count(wb, new_cable, new_size)
+                row_adj += _heal_partner_x_rows(wb, new_cable, new_size)
                 changed += row_adj
             if changed:
                 try:
