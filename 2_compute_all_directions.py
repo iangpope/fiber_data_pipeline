@@ -474,34 +474,52 @@ def generate_colored_table(named_edges: list, location_coords: dict,
                     cable_confidence.setdefault(str(cable), {"bearing": None, "confidence": "ok"})
                     continue
 
-            # -- Walk 5 m along the cable and compute the bearing --
-            # Walking a short distance away from the splice avoids the
-            # erratic bearing that can result from very small initial segments.
+            # -- Compute bearing --
+            # Primary: use Connections-Table splice-to-splice bearing.
+            # The fiberCable KMZ layer only stores straight 2-point lines, so
+            # bearing(A, B) via CT coords is equally accurate and more reliable
+            # (no KMZ GPS drift, works for all cable name formats).
+            # Fallback: KMZ 5 m walk (for cables with non-parseable names).
+            a_end, b_end, _ = parse_endpoints(str(cable))
+            other_loc_name  = None
+            if a_end and b_end:
+                loc_str = str(loc).strip()
+                if loc_str == a_end:
+                    other_loc_name = b_end
+                elif loc_str == b_end:
+                    other_loc_name = a_end
+            ct_other_coord = (
+                location_coords.get(other_loc_name) if other_loc_name else None
+            )
+
             is_short = False
-            dist   = 0
-            walked = latlon
-            for i in range(len(coords) - 1):
-                seg_len = geodesic(coords[i], coords[i + 1]).meters
-                if dist + seg_len >= 5:
-                    # Interpolate to find the exact 5 m point on this segment.
-                    ratio  = (5 - dist) / seg_len
-                    lat    = coords[i][0] + (coords[i + 1][0] - coords[i][0]) * ratio
-                    lon    = coords[i][1] + (coords[i + 1][1] - coords[i][1]) * ratio
-                    walked = (lat, lon)
-                    break
-                dist += seg_len
+            if ct_other_coord is not None:
+                # Direct bearing from this splice to the other splice endpoint.
+                b = bearing(latlon, ct_other_coord)
+            else:
+                # KMZ-based 5 m walk fallback.
+                dist   = 0
+                walked = latlon
+                for i in range(len(coords) - 1):
+                    seg_len = geodesic(coords[i], coords[i + 1]).meters
+                    if dist + seg_len >= 5:
+                        ratio  = (5 - dist) / seg_len
+                        lat_w  = coords[i][0] + (coords[i + 1][0] - coords[i][0]) * ratio
+                        lon_w  = coords[i][1] + (coords[i + 1][1] - coords[i][1]) * ratio
+                        walked = (lat_w, lon_w)
+                        break
+                    dist += seg_len
 
-            # If the cable is shorter than 5 m, use its far endpoint.
-            if walked == latlon:
-                is_short = True
-                cable_len = sum(
-                    geodesic(coords[i], coords[i + 1]).meters
-                    for i in range(len(coords) - 1)
-                )
-                dbg_short_cables.append((str(loc), str(cable), round(cable_len, 2)))
-                walked = coords[-1]
+                if walked == latlon:
+                    is_short = True
+                    cable_len = sum(
+                        geodesic(coords[i], coords[i + 1]).meters
+                        for i in range(len(coords) - 1)
+                    )
+                    dbg_short_cables.append((str(loc), str(cable), round(cable_len, 2)))
+                    walked = coords[-1]
 
-            b     = bearing(latlon, walked)
+                b = bearing(latlon, walked)
             color = bearing_to_color(b)
             conf  = "short" if is_short else ("diagonal" if is_diagonal_bearing(b) else "ok")
             if is_diagonal_bearing(b):

@@ -151,6 +151,22 @@
     .popup-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
     .popup-cable-name { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: #8892b0; }
 
+    /* ── Cable map labels ───────────────────────────────────── */
+    .cable-label {
+      background: rgba(10,12,20,0.82);
+      border: 1px solid rgba(255,255,255,0.13);
+      border-radius: 3px;
+      color: #c8d3e8;
+      font-size: 9px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 500;
+      white-space: nowrap;
+      padding: 2px 5px;
+      pointer-events: none;
+      box-shadow: none;
+    }
+    .leaflet-tooltip.cable-label::before { display: none; }
+
     /* ── Confidence badges ───────────────────────────────────── */
     .conf-badge {
       display: inline-block; font-size: 0.65rem; font-weight: 700;
@@ -378,9 +394,10 @@
     let activeLocationCables = null;
 
     function clearHighlights() {
-      activeHighlights.forEach(({layer}) =>
-        layer.eachLayer(l => l.setStyle({ color: CABLE_GRAY, weight: CABLE_WEIGHT, opacity: 0.65 }))
-      );
+      activeHighlights.forEach(({layer}) => {
+        layer.eachLayer(l => l.setStyle({ color: CABLE_GRAY, weight: CABLE_WEIGHT, opacity: 0.65 }));
+        try { layer.closeTooltip(); } catch(e) {}
+      });
       activeHighlights = [];
       activeLocationCables = null;
       deactivateMarker();
@@ -393,12 +410,12 @@
         const layer = cableLayerMap[c.name];
         if (!layer) return;
         layer.eachLayer(l => l.setStyle({ color: c.color, weight: 4, opacity: 1 }));
+        try { layer.openTooltip(); } catch(e) {}
         activeHighlights.push({ layer });
       });
     }
 
     map.on("popupclose", () => {
-      // Only clear highlights if no accordion item is open
       if (!document.querySelector(".loc-header.open")) clearHighlights();
     });
 
@@ -484,10 +501,9 @@
         const latlng = [f.geometry.coordinates[1], f.geometry.coordinates[0]];
         locationLatLngs[p.name] = latlng;
 
-        const item    = document.createElement("div");
+        const item = document.createElement("div");
         item.className = "loc-item";
 
-        // Header
         const hdr = document.createElement("div");
         hdr.className = "loc-header";
         hdr.innerHTML = `
@@ -495,7 +511,6 @@
           <span class="loc-name">${p.name}</span>
           <span class="loc-count">${p.cables.length}</span>`;
 
-        // Cable section
         const section = document.createElement("div");
         section.className = "loc-cables";
         section.style.display = "none";
@@ -509,17 +524,35 @@
           section.appendChild(warn);
         }
 
-        hdr.addEventListener("click", () => {
-          const open = hdr.classList.toggle("open");
-          section.style.display = open ? "block" : "none";
-          if (open) {
+        // Shared open/close logic used by both accordion header and map marker clicks
+        function openLocation(panMap) {
+          // Close any other open accordion row first
+          document.querySelectorAll(".loc-header.open").forEach(oh => {
+            if (oh === hdr) return;
+            oh.classList.remove("open");
+            oh.nextElementSibling.style.display = "none";
+          });
+
+          const willOpen = !hdr.classList.contains("open");
+          hdr.classList.toggle("open");
+          section.style.display = willOpen ? "block" : "none";
+
+          if (willOpen) {
             highlightCables(p.cables);
             activateMarker(p.name);
-            map.panTo(latlng, { animate: true, duration: 0.4 });
+            if (panMap) map.panTo(latlng, { animate: true, duration: 0.4 });
+            // Scroll the accordion panel to this row
+            setTimeout(() => item.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
           } else {
             clearHighlights();
           }
-        });
+        }
+
+        hdr.addEventListener("click", () => openLocation(true));
+
+        // Clicking the map marker opens this location in the accordion
+        const m = locationMarkers[p.name];
+        if (m) m.on("click", () => openLocation(false));
 
         item.appendChild(hdr);
         item.appendChild(section);
@@ -601,6 +634,20 @@
       return row;
     }
 
+    // ── Cable label helper ────────────────────────────────────────────────────
+    function cableLabel(name) {
+      // New format: RC73E_SE_001_TO_RC73E_FT_071_48CT → "SE_001→FT_071 48CT"
+      const mN = name.match(/_((?:FT|SE)_\d+)_TO_[A-Z0-9]+_((?:FT|SE)_\d+)_(\d{2,3}CT)/i);
+      if (mN) return `${mN[1]}→${mN[2]} ${mN[3]}`;
+      // Old format: 48CT MICRC31D007 TO MICRC310043 → "…C31D007→…10043 48CT"
+      const mO = name.match(/^(\d{2,3}CT)\s+(\S+)\s+TO\s+(\S+)/i);
+      if (mO) {
+        const s = n => n.length > 8 ? '\u2026' + n.slice(-7) : n;
+        return `${s(mO[2])}→${s(mO[3])} ${mO[1]}`;
+      }
+      return name.length > 22 ? name.slice(0, 21) + '\u2026' : name;
+    }
+
     // ── Load GeoJSON ──────────────────────────────────────────────────────────
     fetch("/geojson/{{ job_id }}")
       .then(r => r.json())
@@ -637,6 +684,10 @@
             pl.bindPopup(() => buildCablePopup(p.cable), { maxWidth: 320 });
             fg.addLayer(pl);
           });
+          fg.bindTooltip(cableLabel(p.cable), {
+            permanent: true, className: 'cable-label', direction: 'center', sticky: false,
+          });
+          fg.closeTooltip();
           fg.addTo(layerLines);
           cableProps[p.cable] = { color: p.color, direction: p.direction,
                                   bearing: p.bearing, confidence: p.confidence };
@@ -660,7 +711,6 @@
           locationBaseColors[p.name] = baseColor;
           const marker = L.marker(latlng, { icon: makeIcon(baseColor) }).addTo(layerPoints);
           locationMarkers[p.name] = marker;
-          marker.on("popupopen", () => highlightCables(p.cables));
           marker.bindPopup(
             `<div class="popup-title">${p.name}</div>${cablesHtml||'<span style="color:#666">No cables</span>'}${missingHtml}`,
             { maxWidth: 340 });
