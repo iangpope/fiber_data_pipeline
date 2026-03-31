@@ -608,8 +608,10 @@ def _write_report(results: list[dict], output_path: Path) -> None:
 
 def main(data_dir: str = "data", output_dir: str = "output") -> None:
     global INPUT_FILE, OUTPUT_FILE
-    INPUT_FILE  = Path(output_dir) / "Asbuilt_Workbook_post12.xlsx"
-    OUTPUT_FILE = Path(output_dir) / "Path_of_Light_Confirmation.xlsx"
+    _out = Path(output_dir)
+    _matches = list(_out.glob("* Asbuilt Workbook.xlsx"))
+    INPUT_FILE  = _matches[0] if _matches else _out / "Asbuilt_Workbook_post12.xlsx"
+    OUTPUT_FILE = _out / "Path_of_Light_Confirmation.xlsx"
     if not INPUT_FILE.exists():
         raise SystemExit(f"Input file not found: {INPUT_FILE}")
 

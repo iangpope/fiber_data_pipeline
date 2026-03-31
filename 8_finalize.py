@@ -23,7 +23,7 @@ producing the finished as-built workbook.
         to trim the sheet down to the columns that belong in the final output.
 
 Reads:  output/Combined_Reordered_With_OTE.xlsx
-Writes: output/Asbuilt_Workbook_post12.xlsx
+Writes: output/{OLT} Asbuilt Workbook.xlsx  (OLT prefix detected from sheet names)
 """
 
 from __future__ import annotations
@@ -48,7 +48,19 @@ from naming_utils import (
 # File paths
 # ---------------------------------------------------------------------------
 INPUT_FILE  = Path("output") / "Combined_Reordered_With_OTE.xlsx"
-OUTPUT_FILE = Path("output") / "Asbuilt_Workbook_post12.xlsx"
+OUTPUT_FILE = Path("output") / "Asbuilt_Workbook_post12.xlsx"  # overridden in main()
+
+# Regex to detect the OLT project prefix from sheet names like "RC73E_SE_009".
+_OLT_PREFIX_RX = re.compile(r'^([A-Z0-9]+)_(?:SE|FT)_\d+', re.IGNORECASE)
+
+
+def _detect_olt_name(wb) -> str:
+    """Return the OLT project prefix (e.g. 'RC73E') from workbook sheet names."""
+    for name in wb.sheetnames:
+        m = _OLT_PREFIX_RX.match(name)
+        if m:
+            return m.group(1).upper()
+    return "Asbuilt"
 
 # Regex to parse legacy location names and extract the enclosure type suffix
 # (S = splice/SE, D = distribution/DE) and the numeric identifier.
@@ -445,8 +457,7 @@ def run_part_b(wb) -> None:
 
 def main(data_dir: str = "data", output_dir: str = "output") -> None:
     global INPUT_FILE, OUTPUT_FILE
-    INPUT_FILE  = Path(output_dir) / "Combined_Reordered_With_OTE.xlsx"
-    OUTPUT_FILE = Path(output_dir) / "Asbuilt_Workbook_post12.xlsx"
+    INPUT_FILE = Path(output_dir) / "Combined_Reordered_With_OTE.xlsx"
     if not INPUT_FILE.exists():
         raise SystemExit(f"Missing input: {INPUT_FILE}")
 
@@ -458,6 +469,8 @@ def main(data_dir: str = "data", output_dir: str = "output") -> None:
     # Part B: column shifting and trimming.
     run_part_b(wb)
 
+    olt_name  = _detect_olt_name(wb)
+    OUTPUT_FILE = Path(output_dir) / f"{olt_name} Asbuilt Workbook.xlsx"
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(OUTPUT_FILE))
     print(f"Step 8 complete: {OUTPUT_FILE}")

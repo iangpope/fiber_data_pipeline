@@ -547,12 +547,17 @@ def _run_job(job_id: str, data_dir: str, output_dir: str) -> None:
         job["status"] = result["status"]
         # Collect output files
         outputs = {}
-        for fname in ["Asbuilt_Workbook_post12.xlsx", "Path_of_Light_Confirmation.xlsx"]:
-            fpath = Path(output_dir) / fname
+        _out = Path(output_dir)
+        # Asbuilt workbook is named "{OLT} Asbuilt Workbook.xlsx"
+        for _ab in sorted(_out.glob("* Asbuilt Workbook.xlsx")):
+            outputs[_ab.name] = str(_ab)
+            break
+        for fname in ["Path_of_Light_Confirmation.xlsx"]:
+            fpath = _out / fname
             if fpath.exists():
                 outputs[fname] = str(fpath)
         # Tap report is named "{OLT} Tap Report.xlsx" (OLT name varies by project)
-        for tap_path in sorted(Path(output_dir).glob("* Tap Report.xlsx")):
+        for tap_path in sorted(_out.glob("* Tap Report.xlsx")):
             outputs[tap_path.name] = str(tap_path)
             break
         job["outputs"] = outputs
