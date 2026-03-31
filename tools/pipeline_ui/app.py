@@ -353,25 +353,37 @@ def _adjust_sheath_row_count(wb, cable: str, new_size: str) -> int:
     return rows_changed
 
 
-def _heal_partner_x_rows(wb, resized_cable: str, new_size: str) -> int:
+def _heal_partner_x_rows(wb, old_cable: str, new_cable: str, new_size: str) -> int:
     """
-    After resizing ``resized_cable`` to ``new_size``, scan every worksheet
-    for cable blocks whose *last* connected right-side partner is
-    ``resized_cable`` and that have trailing X rows (blank right side).
+    After resizing ``old_cable`` → ``new_cable`` (to ``new_size``), scan every
+    worksheet for cable blocks whose *last* connected right-side partner is
+    ``new_cable`` and that have trailing X rows (blank right side) strictly
+    beyond the old CT capacity.
 
-    This handles the order-of-resize problem: when cable B is resized
-    before cable A, B's new rows become X because A was still small.
-    Once A is resized here, those X rows in B are healed automatically.
+    This handles the order-of-resize problem: when cable B is resized before
+    cable A, B's new rows become X because A was still small.  Once A is
+    resized, those X rows in B are healed automatically.
 
-    Only heals rows whose 1-based position within the block is ≤ the new
-    CT count of the resized cable, and only where CONNECTION == 'X' and
-    the right-side SHEATH NAME is blank — i.e. rows that were set to X
-    specifically because the partner didn't reach them yet.
+    **Critical threshold**: only heals rows whose 1-based position within the
+    block is > old_ct (derived from ``old_cable``) AND ≤ new_ct.  Positions
+    ≤ old_ct may be original Magellan X rows (cables that physically don't
+    connect on that fiber) and must never be touched.
     """
     m = re.match(r'^(\d+)CT$', new_size, re.IGNORECASE)
     if not m:
         return 0
     new_ct = int(m.group(1))
+
+    # Derive old_ct from the cable name before the rename.
+    om = re.search(r'_(\d+)CT$', old_cable, re.IGNORECASE)
+    if not om:
+        om = re.match(r'^(\d+)CT\b', old_cable, re.IGNORECASE)
+    old_ct = int(om.group(1)) if om else 0
+
+    # Nothing to heal if the cable didn't actually expand.
+    if old_ct >= new_ct:
+        return 0
+
     healed = 0
 
     for ws in wb.worksheets:
@@ -434,7 +446,7 @@ def _heal_partner_x_rows(wb, resized_cable: str, new_size: str) -> int:
             blocks.append((current_name, current_rows))
 
         for blk_name, brows in blocks:
-            if blk_name == resized_cable:
+            if blk_name == new_cable:
                 continue  # skip the cable we just resized
 
             # Find the right-side cable of the LAST connected row.
@@ -448,7 +460,7 @@ def _heal_partner_x_rows(wb, resized_cable: str, new_size: str) -> int:
                     break
 
             # Only heal blocks whose last partner is the cable we just resized.
-            if last_r_cable != resized_cable:
+            if last_r_cable != new_cable:
                 continue
 
             # Get right-side enclosure values and connection symbol.
@@ -467,10 +479,15 @@ def _heal_partner_x_rows(wb, resized_cable: str, new_size: str) -> int:
                     conn_sym = v
                     break
 
-            # Heal trailing X rows (blank right side) up to new_ct capacity.
+            # Heal X rows whose position is in the range (old_ct, new_ct] only.
+            # Positions ≤ old_ct may be original Magellan X rows and must not
+            # be touched.
             for pos_idx, br in enumerate(brows):
-                if pos_idx + 1 > new_ct:
+                pos = pos_idx + 1   # 1-based position in block
+                if pos > new_ct:
                     break
+                if pos <= old_ct:
+                    continue        # within original capacity — don't touch
                 cv    = str(ws.cell(br, conn_col).value or "").strip()
                 rname = ws.cell(br, r_sheath_col).value
                 if cv != "X" or rname is not None:
@@ -482,7 +499,7 @@ def _heal_partner_x_rows(wb, resized_cable: str, new_size: str) -> int:
                 ws.cell(br, r_buffer_col).value      = buf_c
                 ws.cell(br, r_end_enc_col).value     = r_enc_end
                 ws.cell(br, r_start_enc_col).value   = r_enc_start
-                ws.cell(br, r_sheath_col).value      = resized_cable
+                ws.cell(br, r_sheath_col).value      = new_cable
                 ws.cell(br, r_uuid_col).value        = last_r_uuid
                 healed += 1
 
@@ -607,6 +624,7 @@ def create_app() -> Flask:
             "job_dir":            str(job_dir),
             "status":             "running",
             "outputs":            {},
+            "file_lock":          threading.Lock(),
         }
 
         # Launch background thread.
@@ -735,15 +753,16 @@ def create_app() -> Flask:
         if not colored_path.exists():
             return jsonify({"ok": False, "error": "Connections table not found"}), 404
 
-        wb = openpyxl.load_workbook(str(colored_path))
-        ws = wb.active
-        changed = 0
-        for row in ws.iter_rows(min_row=2):
-            for cell in row[3:]:   # skip Location, Lat, Lon columns
-                if str(cell.value or "").strip() == cable:
-                    cell.fill = new_fill
-                    changed  += 1
-        _safe_save_workbook(wb, colored_path)
+        with _JOBS[job_id]["file_lock"]:
+            wb = openpyxl.load_workbook(str(colored_path))
+            ws = wb.active
+            changed = 0
+            for row in ws.iter_rows(min_row=2):
+                for cell in row[3:]:   # skip Location, Lat, Lon columns
+                    if str(cell.value or "").strip() == cable:
+                        cell.fill = new_fill
+                        changed  += 1
+            _safe_save_workbook(wb, colored_path)
 
         return jsonify({"ok": True, "changed": changed,
                         "color": css_color, "direction": _DIR_LABELS[direction]})
@@ -784,69 +803,157 @@ def create_app() -> Flask:
         changed_total   = 0
         cut_sheet_found = False   # tracks whether cut_sheet.xlsx existed
         cut_sheet_changed = 0     # rename hits in cut_sheet.xlsx specifically
-        for fpath in [
-            job_dir / "data"   / "Connections_Table.xlsx",
-            job_dir / "data"   / "cut_sheet.xlsx",
-            job_dir / "output" / "Colored_Connections_Table.xlsx",
-        ]:
-            if not fpath.exists():
-                continue
-            if fpath.name == "cut_sheet.xlsx":
+        row_adj_err = None
+        diag: dict = {}           # diagnostic info included in every response
+
+        # Serialize all file mutations for this job so concurrent resize/override
+        # requests don't race on the same files (load → modify → save must be atomic
+        # per job).
+        with _JOBS[job_id]["file_lock"]:
+            # Pre-flight: confirm the cable exists in cut_sheet.xlsx before
+            # touching any other file.  Without this check, a failure in
+            # cut_sheet (e.g. the cable was already renamed by a prior attempt)
+            # would still update Connections_Table and Colored_Connections_Table,
+            # leaving the three files inconsistent.
+            cs_path = job_dir / "data" / "cut_sheet.xlsx"
+            if cs_path.exists():
                 cut_sheet_found = True
-            wb = openpyxl.load_workbook(str(fpath), keep_links=False)
-            changed = 0
-            for ws in wb.worksheets:
-                for row in ws.iter_rows():
-                    for cell in row:
-                        if str(cell.value or "").strip() == cable:
-                            cell.value = new_cable
-                            changed += 1
-            if fpath.name == "cut_sheet.xlsx":
-                cut_sheet_changed = changed
-            # For the cut sheet, also adjust the per-sheath row count and
-            # heal any partner cable blocks that have trailing X rows from a
-            # previous resize where the partner was still smaller.
-            row_adj = 0
-            if fpath.name == "cut_sheet.xlsx":
-                row_adj  = _adjust_sheath_row_count(wb, new_cable, new_size)
-                row_adj += _heal_partner_x_rows(wb, new_cable, new_size)
-                changed += row_adj
-            if changed:
-                try:
-                    _safe_save_workbook(wb, fpath)
-                except RuntimeError as save_err:
-                    if row_adj and fpath.name == "cut_sheet.xlsx":
-                        # Row adjustment may have triggered the corruption.
-                        # Fall back to rename-only: reload and apply just the rename.
-                        try:
-                            wb2 = openpyxl.load_workbook(str(fpath), keep_links=False)
-                            rename_count = 0
-                            for ws2 in wb2.worksheets:
-                                for row2 in ws2.iter_rows():
-                                    for cell2 in row2:
-                                        if str(cell2.value or "").strip() == cable:
-                                            cell2.value = new_cable
-                                            rename_count += 1
-                            if rename_count:
-                                _safe_save_workbook(wb2, fpath)
-                                changed_total += rename_count
-                        except Exception:
-                            pass
-                        return jsonify({
-                            "ok": False,
-                            "error": (
-                                "Row count adjustment failed to save cleanly "
-                                f"({save_err}). Cable was renamed but fiber rows "
-                                "were not added — proceed with caution."
-                            ),
-                        }), 500
-                    return jsonify({"ok": False, "error": str(save_err)}), 500
-                changed_total += changed
+                _cs_wb = openpyxl.load_workbook(str(cs_path), keep_links=False)
+                _cs_hits = sum(
+                    1 for _ws in _cs_wb.worksheets
+                    for _row in _ws.iter_rows()
+                    for _cell in _row
+                    if str(_cell.value or "").strip() == cable
+                )
+                _cs_wb.close()
+                if _cs_hits == 0:
+                    return jsonify({
+                        "ok": False,
+                        "error": (
+                            f"'{cable}' was not found in cut_sheet.xlsx. "
+                            "It may have already been renamed by a previous attempt "
+                            "that failed partway through. No files were modified."
+                        ),
+                    }), 400
+
+            # Process cut_sheet.xlsx FIRST so that a save failure there aborts
+            # before touching the other files — keeps all three in a consistent state.
+            for fpath in [
+                job_dir / "data"   / "cut_sheet.xlsx",
+                job_dir / "data"   / "Connections_Table.xlsx",
+                job_dir / "output" / "Colored_Connections_Table.xlsx",
+            ]:
+                if not fpath.exists():
+                    continue
+                if fpath.name == "cut_sheet.xlsx":
+                    cut_sheet_found = True
+                wb = openpyxl.load_workbook(str(fpath), keep_links=False)
+                changed = 0
+                for ws in wb.worksheets:
+                    for row in ws.iter_rows():
+                        for cell in row:
+                            if str(cell.value or "").strip() == cable:
+                                cell.value = new_cable
+                                changed += 1
+                if fpath.name == "cut_sheet.xlsx":
+                    cut_sheet_changed = changed
+                # For the cut sheet, also adjust the per-sheath row count and
+                # heal any partner cable blocks that have trailing X rows from a
+                # previous resize where the partner was still smaller.
+                row_adj = 0
+                if fpath.name == "cut_sheet.xlsx":
+                    diag["cs_rename_hits"] = changed
+                    # col2_before: left-side (col 2) block rows per sheet before
+                    # adjustment — this is what _adjust_sheath_row_count acts on.
+                    diag["cs_col2_before"] = {
+                        ws.title: {"rows": cnt, "max_row": ws.max_row}
+                        for ws in wb.worksheets
+                        for cnt in [sum(
+                            1 for r in range(1, ws.max_row + 1)
+                            if str(ws.cell(r, 2).value or "").strip() == new_cable
+                        )]
+                        if cnt > 0
+                    }
+                    try:
+                        row_adj  = _adjust_sheath_row_count(wb, new_cable, new_size)
+                        row_adj += _heal_partner_x_rows(wb, cable, new_cable, new_size)
+                    except Exception as adj_exc:
+                        import traceback as _tb
+                        row_adj_err = f"{adj_exc}\n{_tb.format_exc()}"
+                    diag["row_adj"] = row_adj
+                    changed += row_adj
+                if changed:
+                    try:
+                        _safe_save_workbook(wb, fpath)
+                        # Verify the save: re-load and count rows per sheet
+                        if fpath.name == "cut_sheet.xlsx":
+                            _vwb = openpyxl.load_workbook(str(fpath), keep_links=False)
+                            # col2_verify: count of col-2 occurrences per sheet
+                            # (left-side blocks only) — the authoritative check that
+                            # row additions were persisted correctly.
+                            diag["cs_verify_col2"] = {
+                                _vws.title: {"rows": cnt, "max_row": _vws.max_row}
+                                for _vws in _vwb.worksheets
+                                for cnt in [sum(
+                                    1 for _r in range(1, _vws.max_row + 1)
+                                    if str(_vws.cell(_r, 2).value or "").strip() == new_cable
+                                )]
+                                if cnt > 0
+                            }
+                            _vwb.close()
+                    except RuntimeError as save_err:
+                        if row_adj and fpath.name == "cut_sheet.xlsx":
+                            # Row adjustment may have triggered the corruption.
+                            # Fall back to rename-only: reload and apply just the rename.
+                            try:
+                                wb2 = openpyxl.load_workbook(str(fpath), keep_links=False)
+                                rename_count = 0
+                                for ws2 in wb2.worksheets:
+                                    for row2 in ws2.iter_rows():
+                                        for cell2 in row2:
+                                            if str(cell2.value or "").strip() == cable:
+                                                cell2.value = new_cable
+                                                rename_count += 1
+                                if rename_count:
+                                    _safe_save_workbook(wb2, fpath)
+                                    changed_total += rename_count
+                            except Exception:
+                                pass
+                            return jsonify({
+                                "ok": False,
+                                "error": (
+                                    "Row count adjustment failed to save cleanly "
+                                    f"({save_err}). Cable was renamed but fiber rows "
+                                    "were not added — proceed with caution."
+                                ),
+                            }), 500
+                        return jsonify({"ok": False, "error": str(save_err)}), 500
+                    changed_total += changed
+                # Surface any row-adjustment exception as a visible warning (rename
+                # may still have saved; pipeline can continue but rows were not added).
+                if row_adj_err:
+                    return jsonify({
+                        "ok": False,
+                        "error": f"Row adjustment raised an exception: {row_adj_err}",
+                    }), 500
+
+        # Cable not found in any file at all — nothing was written.
+        if changed_total == 0:
+            return jsonify({
+                "ok": False,
+                "error": (
+                    f"'{cable}' was not found in any of the pipeline files "
+                    "(cut_sheet.xlsx, Connections_Table.xlsx, "
+                    "Colored_Connections_Table.xlsx). "
+                    f"cut_sheet found={cut_sheet_found}. "
+                    "The resize had no effect."
+                ),
+            }), 400
 
         # Warn if the cut sheet existed but the cable name wasn't found there —
         # this means the name in the connections table differs from the cut sheet,
         # so the pipeline will colorize using an unmatched name.
-        if cut_sheet_found and cut_sheet_changed == 0 and changed_total > 0:
+        if cut_sheet_found and cut_sheet_changed == 0:
             return jsonify({
                 "ok": False,
                 "error": (
@@ -857,8 +964,14 @@ def create_app() -> Flask:
                 ),
             }), 400
 
+        import json as _json
+        app.logger.info(
+            "resize %s → %s | changed=%d | diag=%s",
+            cable, new_cable, changed_total,
+            _json.dumps(diag, default=str)
+        )
         return jsonify({"ok": True, "old_cable": cable, "new_cable": new_cable,
-                        "changed": changed_total})
+                        "changed": changed_total, "diag": diag})
 
     # -----------------------------------------------------------------------
     # Completion page

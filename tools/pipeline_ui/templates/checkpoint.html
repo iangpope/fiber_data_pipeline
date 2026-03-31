@@ -374,6 +374,20 @@
     const locationBaseColors = {}; // name → default icon color
     let   allPointFeatures = []; // kept in sync so applyRename can patch p.cables
 
+    // Track in-flight resize/override requests so the Continue button is
+    // blocked until every pending save has finished.
+    let pendingOps = 0;
+    const continueBtn = document.querySelector('form[action*="/continue"] button[type="submit"]');
+    function setPending(delta) {
+      pendingOps = Math.max(0, pendingOps + delta);
+      if (continueBtn) {
+        continueBtn.disabled = pendingOps > 0;
+        continueBtn.textContent = pendingOps > 0
+          ? `⏳ Saving… (${pendingOps} pending)`
+          : "▶ Continue — Run Steps 3–10";
+      }
+    }
+
     let activeLocName = null;
 
     function activateMarker(name) {
@@ -637,6 +651,7 @@
         const cableName = this.closest(".cable-row").dataset.cable;
         const direction = this.value;
         this.disabled = true;
+        setPending(1);
         fetch("/override/{{ job_id }}", {
           method: "POST", headers: {"Content-Type":"application/json"},
           body: JSON.stringify({ cable: cableName, direction }),
@@ -647,7 +662,7 @@
           applyDirectionUpdate(cableName, res.color, res.direction);
         })
         .catch(e => alert("Error: " + e.message))
-        .finally(() => this.disabled = false);
+        .finally(() => { this.disabled = false; setPending(-1); });
       });
 
       // Size change
@@ -655,6 +670,7 @@
         const cableName = this.closest(".cable-row").dataset.cable;
         const size = this.value;
         this.disabled = true;
+        setPending(1);
         fetch("/resize/{{ job_id }}", {
           method: "POST", headers: {"Content-Type":"application/json"},
           body: JSON.stringify({ cable: cableName, size }),
@@ -665,7 +681,7 @@
           if (res.new_cable !== res.old_cable) applyRename(res.old_cable, res.new_cable);
         })
         .catch(e => alert("Error: " + e.message))
-        .finally(() => this.disabled = false);
+        .finally(() => { this.disabled = false; setPending(-1); });
       });
 
       return row;
